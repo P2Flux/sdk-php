@@ -39,6 +39,10 @@ final class P2FluxClient
         'TRANSACTION_REVERTED' => 'RETRY_LATER',
         'INTERNAL_ERROR' => 'RETRY_LATER',
         'NETWORK_ERROR' => 'RETRY_LATER',
+        // Infrastructure protection, not a payment outcome: the request was turned away before any
+        // money could move, so the subscription is untouched and the call is safe to repeat.
+        'RATE_LIMITED' => 'RETRY_LATER',
+        'CONCURRENCY_LIMIT' => 'RETRY_LATER',
     ];
 
     private string $apiUrl;
