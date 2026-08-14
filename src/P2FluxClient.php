@@ -34,6 +34,10 @@ final class P2FluxClient
         'SUBSCRIPTION_EXPIRED' => 'STOP_SUBSCRIPTION',
         'INVALID_SUBSCRIPTION' => 'INVALID_REQUEST',
         'INVALID_REQUEST' => 'INVALID_REQUEST',
+        // Permanent: the amount or period is outside what the terms can express. Fix the request,
+        // do not retry it - the fallback used to call these retryable, which reads as an outage.
+        'AMOUNT_OUT_OF_BOUNDS' => 'INVALID_REQUEST',
+        'PERIOD_OUT_OF_BOUNDS' => 'INVALID_REQUEST',
         'RPC_ERROR' => 'RETRY_LATER',
         'RELAYER_ERROR' => 'RETRY_LATER',
         'TRANSACTION_REVERTED' => 'RETRY_LATER',
