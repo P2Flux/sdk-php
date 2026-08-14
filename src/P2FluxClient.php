@@ -43,6 +43,11 @@ final class P2FluxClient
         // money could move, so the subscription is untouched and the call is safe to repeat.
         'RATE_LIMITED' => 'RETRY_LATER',
         'CONCURRENCY_LIMIT' => 'RETRY_LATER',
+        // Gas could not be priced, or moved above what this subscription authorized. Nothing was
+        // spent and the subscription is unchanged; the charge waits for better conditions.
+        'GAS_TOO_HIGH' => 'RETRY_LATER',
+        'GAS_QUOTE_UNAVAILABLE' => 'RETRY_LATER',
+        'GAS_FEE_TOO_HIGH' => 'RETRY_LATER',
     ];
 
     private string $apiUrl;

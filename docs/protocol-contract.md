@@ -59,6 +59,7 @@ Every charge returns one status plus an `action` telling you what to do about it
 | `SUBSCRIPTION_EXPIRED` | `STOP_SUBSCRIPTION` | past the authorization's end date |
 | `INVALID_SUBSCRIPTION` | `INVALID_REQUEST` | the reference is malformed, forged or for another deployment |
 | `RPC_ERROR` / `RELAYER_ERROR` / `TRANSACTION_REVERTED` / `INTERNAL_ERROR` | `RETRY_LATER` | operational, not the customer's fault |
+| `GAS_TOO_HIGH` / `GAS_QUOTE_UNAVAILABLE` | `RETRY_LATER` | gas was too expensive or unpriceable; nothing was sent, nothing changed |
 | `NETWORK_ERROR` | `RETRY_LATER` | the SDK could not reach P2Flux at all |
 
 `ok` is true for `CHARGED` and `ALREADY_CHARGED`. Branch on `ok` first — treating
