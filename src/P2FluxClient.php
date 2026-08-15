@@ -56,6 +56,11 @@ final class P2FluxClient
         'GAS_TOO_HIGH' => 'RETRY_LATER',
         'GAS_QUOTE_UNAVAILABLE' => 'RETRY_LATER',
         'GAS_FEE_TOO_HIGH' => 'RETRY_LATER',
+        /* Operator-side limits, not payment outcomes: refused before anything reached the chain, so
+         * nothing was spent and the subscription is untouched. Nothing a customer can act on. */
+        'RELAYER_TX_COST_TOO_HIGH' => 'RETRY_LATER',
+        'RELAYER_BUDGET_EXCEEDED' => 'RETRY_LATER',
+        'RELAYER_NOT_READY' => 'RETRY_LATER',
     ];
 
     private string $apiUrl;
