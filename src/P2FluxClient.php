@@ -61,6 +61,8 @@ final class P2FluxClient
         'RELAYER_TX_COST_TOO_HIGH' => 'RETRY_LATER',
         'RELAYER_BUDGET_EXCEEDED' => 'RETRY_LATER',
         'RELAYER_NOT_READY' => 'RETRY_LATER',
+        // The service is at its own capacity: come back shortly, not "you asked too often".
+        'RPC_BUSY' => 'RETRY_LATER',
     ];
 
     private string $apiUrl;
