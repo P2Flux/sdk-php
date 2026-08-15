@@ -27,6 +27,10 @@ final class P2FluxClient
     public const ACTIONS = [
         'CHARGED' => 'SUCCESS',
         'ALREADY_CHARGED' => 'SUCCESS',
+        // The money moved and the chain has not settled. Not a failure and not a success: leave the
+        // period open, change nothing, ask again shortly - and never send a second charge.
+        'CONFIRMING' => 'WAIT',
+        'PAYMENT_CONFIRMING' => 'WAIT',
         'NOT_DUE' => 'RETRY_LATER',
         'INSUFFICIENT_BALANCE' => 'CUSTOMER_ACTION_REQUIRED',
         'INSUFFICIENT_ALLOWANCE' => 'CUSTOMER_ACTION_REQUIRED',

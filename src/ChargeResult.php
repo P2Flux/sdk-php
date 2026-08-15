@@ -10,6 +10,10 @@ namespace P2Flux;
  * $ok is true for CHARGED and ALREADY_CHARGED: both mean "this billing period is paid". Treating
  * ALREADY_CHARGED as anything other than success is the classic integration bug - it is exactly
  * what a retry after a timeout or a crashed worker returns.
+ *
+ * CONFIRMING is neither: the transaction is on chain but not settled to the required depth, so $ok
+ * is false and $retryable is true. Nothing local may be marked paid, and nothing may be charged
+ * again - $txHash names the transaction the next call will reconcile.
  */
 final class ChargeResult
 {
@@ -42,7 +46,8 @@ final class ChargeResult
             ok: $status === 'CHARGED' || $status === 'ALREADY_CHARGED',
             alreadyPaid: $status === 'ALREADY_CHARGED',
             action: $action,
-            retryable: $action === 'RETRY_LATER',
+            // WAIT is retryable in the only sense that matters: ask the same question again.
+            retryable: $action === 'RETRY_LATER' || $action === 'WAIT',
             txHash: isset($body['tx_hash']) ? (string) $body['tx_hash'] : null,
             amount: isset($body['amount']) ? (string) $body['amount'] : null,
             subscriptionId: isset($body['subscription_id']) ? (string) $body['subscription_id'] : null,
