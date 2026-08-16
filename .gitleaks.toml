@@ -1,0 +1,14 @@
+# Gitleaks configuration for this repository.
+#
+# The generic-api-key rule fires on a fabricated token string in the offline test suite. It is a
+# literal placeholder in a test that never touches a network, kept here as an explicit, reviewed
+# exception rather than silenced globally - a blanket "ignore tests" rule is how a real key
+# eventually slips through a test fixture.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+[rules.allowlist]
+regexes = ['''p2cancel1\.k1\.body\.mac''']
+paths = ['''tests/transport\.php''']
