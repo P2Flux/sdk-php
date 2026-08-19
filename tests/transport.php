@@ -135,5 +135,46 @@ try {
     check('non-callable transport rejected', true);
 }
 
+// --- recovering a payment whose transaction hash was lost ------------------------------
+
+$stub = new StubTransport([
+    '/v1/payments/recover' => [200, ['found' => true, 'valid' => true, 'tx_hash' => '0xrecovered', 'amount' => '5.000000']],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+
+$recovered = $client->recoverPayment('p2f1.k1.body.mac');
+check('recoverPayment returns the located transaction', $recovered['tx_hash'] === '0xrecovered');
+// The intent and nothing else: no hash, no hint, nothing a caller could get wrong.
+check('recovery sends only the intent', array_keys($stub->calls[0]['payload']) === ['intent']);
+
+/* Nothing settled is an ANSWER, not an exception - a merchant loop that had to catch an exception
+ * to learn "keep waiting" is a loop that eventually writes off a real payment. */
+$stub = new StubTransport([
+    '/v1/payments/recover' => [200, ['found' => false, 'code' => 'PAYMENT_NOT_FOUND', 'as_of_block' => '45688490']],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$pending = $client->recoverPayment('p2f1.k1.body.mac');
+check('nothing settled is a result, not an exception', $pending['found'] === false);
+check('and it names the block it was true at', $pending['as_of_block'] === '45688490');
+
+// A settlement still confirming keeps its hash - losing it again is what recovery exists to prevent.
+$stub = new StubTransport([
+    '/v1/payments/recover' => [409, ['found' => true, 'valid' => false, 'code' => 'PAYMENT_CONFIRMING', 'tx_hash' => '0xconfirming']],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$confirming = $client->recoverPayment('p2f1.k1.body.mac');
+check('a confirming recovery reports its hash', $confirming['tx_hash'] === '0xconfirming');
+
+// A deployment that cannot recover is an operator problem, and must not read as "no payment".
+$stub = new StubTransport(['/v1/payments/recover' => [503, ['error' => 'RECOVERY_UNAVAILABLE']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+try {
+    $client->recoverPayment('p2f1.k1.body.mac');
+    check('an unavailable recovery throws', false);
+} catch (P2FluxException $e) {
+    check('an unavailable recovery throws', $e->status === 'RECOVERY_UNAVAILABLE');
+    check('and maps to a retry', $e->action === 'RETRY_LATER');
+}
+
 echo $failures === 0 ? "\nphp sdk transport OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);

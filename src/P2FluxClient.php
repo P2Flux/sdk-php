@@ -154,6 +154,43 @@ final class P2FluxClient
     }
 
     /**
+     * Find the transaction that settled an intent, when its hash was lost.
+     *
+     * The failure this is for: the checkout window dies between the wallet returning a hash and
+     * your server recording it. The money has moved, the order looks unpaid, and there is nothing
+     * to reconcile against. Give this the intent and it finds the settlement on chain - you supply
+     * no hash and no hint, and the match is bound to the exact payment the intent describes, so it
+     * can never hand you somebody else's transaction.
+     *
+     * Pure reads and idempotent, so it is safe to call from a cron for any order you are unsure
+     * about. It also works long after the intent expired: expiry stops a payment being STARTED and
+     * says nothing about one that already happened.
+     *
+     * `['found' => false, 'code' => 'PAYMENT_NOT_FOUND']` means no settlement existed AS OF the
+     * block named in `as_of_block` - NOT that the buyer will never pay. The contract does not
+     * enforce your intent's expiry, so a slow wallet can still settle afterwards and a later call
+     * will find it. Stop retrying on your own business rules, never on one not-found.
+     *
+     * A settlement that is still confirming comes back with `found => true` and the transaction
+     * hash, so you keep the hash rather than having to recover it again.
+     *
+     * @return array<string, mixed>
+     */
+    public function recoverPayment(string $intent): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/payments/recover', ['intent' => $intent]);
+
+        /* Nothing settled, and still confirming, are both ANSWERS - only a broken request or a
+         * deployment that cannot recover is an exception. */
+        $code = isset($body['code']) ? (string) $body['code'] : (isset($body['error']) ? (string) $body['error'] : '');
+        if ($httpStatus >= 400 && $code !== 'PAYMENT_NOT_FOUND' && $code !== 'PAYMENT_CONFIRMING') {
+            $this->throwIfError($httpStatus, $body);
+        }
+
+        return $body;
+    }
+
+    /**
      * Exchange a p2s2 for a short-lived cancellation token that can safely reach the customer's
      * browser: it carries the authorization fields needed to build revoke(), and neither the
      * customer's signature nor any ability to charge. Open <checkout>/#/cancel/<cancel_token>.
