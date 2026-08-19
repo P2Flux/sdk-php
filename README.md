@@ -59,7 +59,7 @@ Not on Packagist yet. Until it is, install from this repository by tag:
 ```json
 {
   "repositories": [{ "type": "vcs", "url": "https://github.com/P2Flux/sdk-php" }],
-  "require": { "p2flux/p2flux-php": "v0.1.0" }
+  "require": { "p2flux/p2flux-php": "v0.3.0" }
 }
 ```
 
