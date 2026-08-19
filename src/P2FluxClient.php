@@ -31,6 +31,16 @@ final class P2FluxClient
         // period open, change nothing, ask again shortly - and never send a second charge.
         'CONFIRMING' => 'WAIT',
         'PAYMENT_CONFIRMING' => 'WAIT',
+        /* Refunds. REFUND_CONFIRMING is the same shape as PAYMENT_CONFIRMING and matters for the
+         * same reason: the transfer is on chain but not settled, so keep the refund pending against
+         * the SAME hash. Sending another because this one has not confirmed would refund twice. */
+        'REFUND_CONFIRMING' => 'WAIT',
+        'REFUND_AMOUNT_INVALID' => 'INVALID_REQUEST',
+        'REFUND_WRONG_MERCHANT' => 'INVALID_REQUEST',
+        /* The receipt does not contain the refund it was supposed to. Never mark an order refunded
+         * on this - investigate the transaction. */
+        'REFUND_TRANSACTION_MISMATCH' => 'INVALID_REQUEST',
+        'REFUND_ORIGINAL_PAYMENT_INVALID' => 'INVALID_REQUEST',
         'NOT_DUE' => 'RETRY_LATER',
         'INSUFFICIENT_BALANCE' => 'CUSTOMER_ACTION_REQUIRED',
         'INSUFFICIENT_ALLOWANCE' => 'CUSTOMER_ACTION_REQUIRED',
@@ -264,6 +274,72 @@ final class P2FluxClient
         $body = json_decode((string) $raw, true);
 
         return [$httpStatus, is_array($body) ? $body : []];
+    }
+
+    /**
+     * Lock the terms of a refund the merchant is about to send from their own wallet.
+     *
+     * A refund is a plain USDC transfer, merchant to buyer. P2Flux never holds the money, never
+     * sends it, charges nothing for it, and returns none of its original commission - the merchant
+     * absorbs that. Gas is the merchant's.
+     *
+     * Nothing you pass here decides where the money goes. The payer, the merchant and the maximum
+     * are derived from the original settlement on chain, so a compromised plugin cannot turn a
+     * refund button into a withdrawal form.
+     *
+     * `$original` identifies the settlement: `['intent' => ..., 'tx_hash' => ...]` for a one-time
+     * payment, or `['subscription' => ..., 'tx_hash' => ..., 'period_index' => ...]` for one
+     * recurring period. Refunds are always per charge, never per subscription.
+     *
+     * `$amountUnits` is micro-USDC as an integer string - "10000000" is 10.00 USDC. Decimals are
+     * refused, because a partial refund computed in floating point is a rounding bug.
+     *
+     * The returned `refund_token` is a SHORT-LIVED browser capability: open
+     * `<checkout>/#/refund/<refund_token>` so the merchant's wallet can send the transfer. Do not
+     * store it. Reconcile later with `verifyRefund()`, which needs no token.
+     *
+     * IMPORTANT: P2Flux keeps no refund history and therefore cannot tell you whether this payment
+     * was already refunded. One refund per payment is YOUR record to enforce - reserve the order row
+     * before calling this, not after.
+     *
+     * @param array<string, mixed> $original
+     * @return array<string, mixed>
+     */
+    public function prepareRefund(array $original, string $amountUnits): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/refunds/prepare', $original + ['amount' => $amountUnits]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * Did the refund actually happen, and has it settled?
+     *
+     * Takes the ORIGINAL settlement rather than the prepare token, deliberately: a refund may need
+     * reconciling hours or days later, after a crash or a support ticket, and a fifteen-minute
+     * bearer token cannot answer that. Everything is re-derived from the chain each time.
+     *
+     * A transaction hash is not a refund. This checks that the receipt carries exactly one USDC
+     * transfer from the original merchant to the original payer for exactly this amount, and that
+     * it is settled to the configured depth. The transfer is matched by EVENT, not by transaction
+     * sender, so a Safe or smart account executing on the merchant's behalf verifies correctly.
+     *
+     * Still confirming is `REFUND_CONFIRMING`, which is a waiting state: poll the SAME hash. Never
+     * send a second refund because the first has not confirmed yet.
+     *
+     * @param array<string, mixed> $original
+     * @return array<string, mixed>
+     */
+    public function verifyRefund(array $original, string $amountUnits, string $refundTxHash): array
+    {
+        [$httpStatus, $body] = $this->post(
+            '/v1/refunds/verify',
+            $original + ['refund_amount' => $amountUnits, 'refund_tx_hash' => $refundTxHash]
+        );
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
     }
 
     /**
