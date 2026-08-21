@@ -35,12 +35,22 @@ final class P2FluxClient
          * same reason: the transfer is on chain but not settled, so keep the refund pending against
          * the SAME hash. Sending another because this one has not confirmed would refund twice. */
         'REFUND_CONFIRMING' => 'WAIT',
+        /* Permanent: a token that is malformed or past its fifteen minutes never becomes valid.
+         * These were absent, so the ?? fallback in throwIfError() reported them as RETRY_LATER and
+         * a merchant would retry a dead token forever. */
+        'INVALID_REFUND_TOKEN' => 'INVALID_REQUEST',
+        'REFUND_TOKEN_EXPIRED' => 'INVALID_REQUEST',
         'REFUND_AMOUNT_INVALID' => 'INVALID_REQUEST',
         'REFUND_WRONG_MERCHANT' => 'INVALID_REQUEST',
         /* The receipt does not contain the refund it was supposed to. Never mark an order refunded
          * on this - investigate the transaction. */
         'REFUND_TRANSACTION_MISMATCH' => 'INVALID_REQUEST',
         'REFUND_ORIGINAL_PAYMENT_INVALID' => 'INVALID_REQUEST',
+        /* Recovery. PAYMENT_NOT_FOUND is an as-of-this-block answer and never a permanent one, so
+         * it is a retry rather than a verdict; the other two are operational. */
+        'PAYMENT_NOT_FOUND' => 'RETRY_LATER',
+        'PAYMENT_RECOVERY_INCONSISTENT' => 'RETRY_LATER',
+        'RECOVERY_UNAVAILABLE' => 'RETRY_LATER',
         'NOT_DUE' => 'RETRY_LATER',
         'INSUFFICIENT_BALANCE' => 'CUSTOMER_ACTION_REQUIRED',
         'INSUFFICIENT_ALLOWANCE' => 'CUSTOMER_ACTION_REQUIRED',
@@ -374,7 +384,18 @@ final class P2FluxClient
             '/v1/refunds/verify',
             $original + ['refund_amount' => $amountUnits, 'refund_tx_hash' => $refundTxHash]
         );
-        $this->throwIfError($httpStatus, $body);
+
+        /* Still confirming is an ANSWER, not an exception - this method's own documentation says so,
+         * and it used to throw anyway. A caller forced to catch an exception to learn "wait a
+         * moment" is a caller that eventually sends a second refund.
+         *
+         * The API answers 409 for this as of 2026-08-21, matching PAYMENT_CONFIRMING; it previously
+         * answered 400. Keyed on the CODE rather than the status, so both behave identically and an
+         * older deployment keeps working. */
+        $code = isset($body['error']) ? (string) $body['error'] : '';
+        if ($httpStatus >= 400 && $code !== 'REFUND_CONFIRMING') {
+            $this->throwIfError($httpStatus, $body);
+        }
 
         return $body;
     }

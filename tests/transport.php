@@ -176,5 +176,37 @@ try {
     check('and maps to a retry', $e->action === 'RETRY_LATER');
 }
 
+// --- refunds: a confirming refund is an answer, and dead tokens are permanent ------------
+
+/* 409 as of 2026-08-21, matching PAYMENT_CONFIRMING. It used to be 400, and verifyRefund threw on
+ * it regardless - contradicting its own documentation and making a caller catch an exception to
+ * learn "wait a moment", which is how a second refund gets sent. */
+$stub = new StubTransport([
+    '/v1/refunds/verify' => [409, ['error' => 'REFUND_CONFIRMING', 'action' => 'WAIT']],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$confirming = $client->verifyRefund(['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc'], '2500000', '0xdef');
+check('a confirming refund is returned, not thrown', ($confirming['error'] ?? '') === 'REFUND_CONFIRMING');
+
+// The same code arrived as 400 before the correction; keyed on the code, so both still work.
+$stub = new StubTransport(['/v1/refunds/verify' => [400, ['error' => 'REFUND_CONFIRMING']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$legacy = $client->verifyRefund(['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc'], '2500000', '0xdef');
+check('an older deployment 400 reads the same', ($legacy['error'] ?? '') === 'REFUND_CONFIRMING');
+
+/* A malformed or expired refund token never becomes valid. These had no ACTIONS entry, so the
+ * fallback reported them as RETRY_LATER and a merchant would retry a dead token forever. */
+$stub = new StubTransport(['/v1/refunds/verify' => [400, ['error' => 'INVALID_REFUND_TOKEN']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+try {
+    $client->verifyRefund(['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc'], '2500000', '0xdef');
+    check('a dead refund token throws', false);
+} catch (P2FluxException $e) {
+    check('a dead refund token throws', $e->status === 'INVALID_REFUND_TOKEN');
+    check('and is permanent, not a retry', $e->action === 'INVALID_REQUEST', $e->action);
+}
+
+check('recovery codes carry actions too', P2FluxClient::ACTIONS['PAYMENT_NOT_FOUND'] === 'RETRY_LATER');
+
 echo $failures === 0 ? "\nphp sdk transport OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);
