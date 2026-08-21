@@ -136,6 +136,10 @@ final class P2FluxClient
      * Technical terms for a one-time payment. The reference is server-generated: keep your own
      * order -> reference mapping.
      *
+     * The hosted API enforces a 0.01 USDC minimum per one-time payment; a smaller amount is
+     * refused as AMOUNT_OUT_OF_BOUNDS before an intent exists. The server is canonical - this SDK
+     * deliberately does not duplicate the check.
+     *
      * @param array{recipient: string, amount: string} $terms
      * @return array<string, mixed>
      */
@@ -153,11 +157,21 @@ final class P2FluxClient
      *
      * A rejected payment is `['valid' => false, 'code' => ...]` with HTTP 200, not an exception.
      *
+     * `$settlementReceipt` is the sealed token a previous CONFIRMED verification of this same
+     * payment returned (the checkout couriers it to your callback). Passing it lets the server
+     * answer without re-reading the chain; a missing or broken one silently falls back to the full
+     * verification, so it is always safe to pass whatever the browser handed you - the server,
+     * not the receipt, remains the authority.
+     *
      * @return array<string, mixed>
      */
-    public function verifyPayment(string $intent, string $txHash): array
+    public function verifyPayment(string $intent, string $txHash, ?string $settlementReceipt = null): array
     {
-        [$httpStatus, $body] = $this->post('/v1/payments/verify', ['intent' => $intent, 'tx_hash' => $txHash]);
+        $payload = ['intent' => $intent, 'tx_hash' => $txHash];
+        if ($settlementReceipt !== null && $settlementReceipt !== '') {
+            $payload['settlement_receipt'] = $settlementReceipt;
+        }
+        [$httpStatus, $body] = $this->post('/v1/payments/verify', $payload);
         $this->throwIfError($httpStatus, $body);
 
         return $body;

@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-08-21
+
+### Added
+
+- **`verifyPayment()` accepts an optional third argument, `$settlementReceipt`** - the sealed
+  token a previous CONFIRMED verification returned (couriered from the buyer's checkout to your
+  callback). Passing it lets the server answer without re-reading the chain; a missing, expired or
+  mismatched receipt silently falls back to the full verification, so it is always safe to pass
+  whatever the browser handed you. Omitting it keeps the exact previous behaviour, and old servers
+  ignore nothing - the field is only sent when non-empty.
 
 ### Fixed
 

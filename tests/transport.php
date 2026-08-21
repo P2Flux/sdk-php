@@ -86,6 +86,13 @@ $verified = $client->verifyPayment($intent['intent'], '0xabc');
 check('verifyPayment confirms', $verified['valid'] === true);
 check('verify posts intent and tx_hash', $stub->calls[1]['payload'] === ['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc']);
 
+// The settlement receipt is included only when the caller actually has one - an old server that
+// does not know the field never sees it, and null/'' mean "verify for real" exactly like absence.
+$client->verifyPayment('p2f1.k1.body.mac', '0xabc', 'p2paid1.k1.sealed.mac');
+check('a settlement receipt rides in the payload', $stub->calls[2]['payload'] === ['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc', 'settlement_receipt' => 'p2paid1.k1.sealed.mac']);
+$client->verifyPayment('p2f1.k1.body.mac', '0xabc', '');
+check('an empty receipt is not sent at all', $stub->calls[3]['payload'] === ['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc']);
+
 // A rejected payment is a 200 body, not an exception - the caller must inspect `valid`.
 $rejecting = new StubTransport(['/v1/payments/verify' => [200, ['valid' => false, 'code' => 'RECIPIENT_MISMATCH']]]);
 $client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $rejecting]);
