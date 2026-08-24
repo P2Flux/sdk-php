@@ -8,9 +8,29 @@ use P2Flux\P2FluxClient;
 
 $p2flux = new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'timeout' => 30]);
 
-$result = $p2flux->charge($subscriptionRef);   // never throws on a payment outcome
-$state  = $p2flux->status($subscriptionRef);
+// One-time: create -> hosted checkout -> verify
+$payment = $p2flux->createPayment(['recipient' => $merchantWallet, 'amount' => '12.50']);
+// send the buyer to https://pay.p2flux.com/#/pay/{$payment['intent']}
+$verdict = $p2flux->verifyPayment($payment['intent'], $txHash);
+
+// Recurring: create -> hosted checkout authorizes -> finalize -> charge from YOUR renewal job
+$setup  = $p2flux->createSubscription(['recipient' => $merchantWallet, 'amount' => '5.00', 'period' => 30 * 86400]);
+$sub    = $p2flux->finalizeSubscription($setup['setup_token'], $payer, $signature);
+$result = $p2flux->charge($sub['subscription']);   // never throws on a payment outcome
+$state  = $p2flux->status($sub['subscription']);
 ```
+
+This SDK covers the **complete public V1 merchant/server API** — the same 15 operations as the JS
+SDK (`@p2flux/sdk`): one-time payments (create/resolve/verify with settlement receipts), recovery,
+subscription setup/resolve/finalize/charge/status, cancellation sessions and preparation, allowance
+revocation, and refunds (prepare/resolve/verify). No raw REST calls are needed for a normal
+integration. `/health` is an operational liveness endpoint, not a merchant operation; `/metrics`
+and `/ready` are loopback-only — none belongs in an SDK.
+
+**Parity is tested, not promised.** `tests/transport.php` holds the checked-in list of all 15
+public V1 merchant operations and fails if any stops being reachable through the client; the JS
+SDK and P2Flux/core carry the same guard, so a new public operation turns every list red until
+both SDKs support it.
 
 ## The one rule worth knowing
 
@@ -42,12 +62,23 @@ The full result contract is in [`docs/protocol-contract.md`](docs/protocol-contr
 The `transport` option takes any callable, so a host framework supplies its own stack — WordPress's
 `wp_remote_post`, Guzzle, Symfony HttpClient. The SDK itself pulls in nothing.
 
+The callable receives the absolute URL, the payload as an array, and the timeout in seconds, and
+must return `[int $httpStatus, array $decodedBody]` — the body decoded, not the JSON string.
+
 ```php
 $p2flux = new P2FluxClient([
     'apiUrl'    => 'https://api.p2flux.com',
-    'transport' => function (string $url, array $options): array {
-        $res = wp_remote_post($url, $options);
-        return [wp_remote_retrieve_response_code($res), wp_remote_retrieve_body($res)];
+    'transport' => function (string $url, array $payload, int $timeout): array {
+        $res = wp_remote_post($url, [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body'    => wp_json_encode($payload),
+            'timeout' => $timeout,
+        ]);
+        if (is_wp_error($res)) {
+            throw new P2Flux\P2FluxException('NETWORK_ERROR', 'RETRY_LATER', ['detail' => $res->get_error_message()]);
+        }
+        $body = json_decode(wp_remote_retrieve_body($res), true);
+        return [(int) wp_remote_retrieve_response_code($res), is_array($body) ? $body : []];
     },
 ]);
 ```
@@ -59,12 +90,17 @@ Not on Packagist yet. Until it is, install from this repository by tag:
 ```json
 {
   "repositories": [{ "type": "vcs", "url": "https://github.com/P2Flux/sdk-php" }],
-  "require": { "p2flux/p2flux-php": "v0.4.0" }
+  "require": { "p2flux/p2flux-php": "v0.5.0" }
 }
 ```
 
 Pin an exact tag. Vendoring a copy is fine too — but vendor a released tag, so there is still only
 one place this code is edited.
+
+## Examples
+
+[`examples/`](examples/) — a one-time payment end to end (`one-time.php`), a subscription from
+setup to cancellation (`subscription.php`), and a refund (`refund.php`).
 
 ## Tests
 

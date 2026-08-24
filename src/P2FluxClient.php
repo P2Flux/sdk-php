@@ -83,6 +83,29 @@ final class P2FluxClient
         'RELAYER_NOT_READY' => 'RETRY_LATER',
         // The service is at its own capacity: come back shortly, not "you asked too often".
         'RPC_BUSY' => 'RETRY_LATER',
+        /* The API ships no `action` for these, so this local fallback is what a merchant sees. A
+         * dead or mismatched token never becomes valid by retrying - integration errors, all. */
+        'INVALID_INTENT' => 'INVALID_REQUEST',
+        'INTENT_EXPIRED' => 'INVALID_REQUEST',
+        'INVALID_REFERENCE' => 'INVALID_REQUEST',
+        'INVALID_SETUP_TOKEN' => 'INVALID_REQUEST',
+        'SETUP_TOKEN_EXPIRED' => 'INVALID_REQUEST',
+        'INVALID_CANCEL_TOKEN' => 'INVALID_REQUEST',
+        'CANCEL_TOKEN_EXPIRED' => 'INVALID_REQUEST',
+        'TERMS_MISMATCH' => 'INVALID_REQUEST',
+        'PERMISSION_NOT_FOUND' => 'INVALID_REQUEST',
+        'INVALID_SIGNATURE' => 'INVALID_REQUEST',
+        'UNSUPPORTED_SIGNATURE_FORMAT' => 'INVALID_REQUEST',
+        'WRONG_SPENDER' => 'INVALID_REQUEST',
+        'WRONG_TOKEN' => 'INVALID_REQUEST',
+        'INVALID_EXTRA_DATA' => 'INVALID_REQUEST',
+        // A settled intent cannot settle twice; retrying will not change the answer.
+        'PAYMENT_ALREADY_PROCESSED' => 'INVALID_REQUEST',
+        // The transaction may still be propagating or mining - the same question can answer anew.
+        'TRANSACTION_NOT_FOUND' => 'RETRY_LATER',
+        /* The customer's contract wallet costs more to validate than the API will spend. Only the
+         * customer can fix that, by authorizing from an ordinary wallet. */
+        'SIGNATURE_VALIDATION_TOO_EXPENSIVE' => 'CUSTOMER_ACTION_REQUIRED',
     ];
 
     private string $apiUrl;
@@ -133,6 +156,43 @@ final class P2FluxClient
     }
 
     /**
+     * The authoritative terms behind a setup token, plus the exact EIP-712 payload (`typed_data`)
+     * the customer's wallet must sign. This is what a checkout displays - the token, not the page
+     * that opened it, is the source of truth for what is being authorized.
+     *
+     * @return array<string, mixed>
+     */
+    public function resolveSubscription(string $setupToken): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/subscriptions/resolve', ['setup_token' => $setupToken]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * Exchange the customer's EIP-712 signature for the `p2s2.` charge capability.
+     *
+     * The hosted checkout performs this step itself; call it directly when you run your OWN
+     * checkout page and collected the signature there. The returned `subscription` is the ONE
+     * thing your system stores per subscription - treat it like a credential: encrypted at rest,
+     * never in a URL, never in a log.
+     *
+     * @return array<string, mixed>
+     */
+    public function finalizeSubscription(string $setupToken, string $payer, string $signature): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/subscriptions/finalize', [
+            'setup_token' => $setupToken,
+            'payer' => $payer,
+            'signature' => $signature,
+        ]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
      * Technical terms for a one-time payment. The reference is server-generated: keep your own
      * order -> reference mapping.
      *
@@ -146,6 +206,21 @@ final class P2FluxClient
     public function createPayment(array $terms): array
     {
         [$httpStatus, $body] = $this->post('/v1/payments', $terms);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * The authoritative terms for a checkout to display, read back from the intent itself.
+     * Refuses an expired intent (INTENT_EXPIRED) - expiry stops a payment being STARTED; it never
+     * makes an existing settlement unverifiable.
+     *
+     * @return array<string, mixed>
+     */
+    public function resolvePayment(string $intent): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/payments/resolve', ['intent' => $intent]);
         $this->throwIfError($httpStatus, $body);
 
         return $body;
@@ -246,7 +321,10 @@ final class P2FluxClient
         try {
             [, $body] = $this->post('/v1/charges', ['subscription' => $subscriptionRef]);
         } catch (P2FluxException $e) {
-            return ChargeResult::fromArray(['status' => 'NETWORK_ERROR']);
+            /* The exception's raw body rides along (curl's `detail`, for one), because the place an
+             * operator most needs to know WHY the API was unreachable is their renewal job's log -
+             * and this used to be the one place that reason was dropped. */
+            return ChargeResult::fromArray(['status' => 'NETWORK_ERROR'] + $e->raw);
         }
 
         return ChargeResult::fromArray($body);
@@ -321,6 +399,9 @@ final class P2FluxClient
             CURLOPT_POSTFIELDS => json_encode($payload === [] ? new \stdClass() : $payload, JSON_THROW_ON_ERROR),
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
             CURLOPT_TIMEOUT => $this->timeout,
+            /* A black-holed host must fail in seconds, not hold a renewal worker for the full
+             * request timeout: connecting is never the slow part of a charge - confirmation is. */
+            CURLOPT_CONNECTTIMEOUT => min(10, $this->timeout),
         ]);
 
         $raw = curl_exec($ch);
@@ -406,10 +487,25 @@ final class P2FluxClient
          * The API answers 409 for this as of 2026-08-21, matching PAYMENT_CONFIRMING; it previously
          * answered 400. Keyed on the CODE rather than the status, so both behave identically and an
          * older deployment keeps working. */
-        $code = isset($body['error']) ? (string) $body['error'] : '';
+        $code = isset($body['code']) ? (string) $body['code'] : (isset($body['error']) ? (string) $body['error'] : '');
         if ($httpStatus >= 400 && $code !== 'REFUND_CONFIRMING') {
             $this->throwIfError($httpStatus, $body);
         }
+
+        return $body;
+    }
+
+    /**
+     * What a refund token authorizes, read back by the page that holds it. The browser-facing
+     * counterpart of prepareRefund(); reconciliation still uses verifyRefund(), which needs no
+     * token at all.
+     *
+     * @return array<string, mixed>
+     */
+    public function resolveRefund(string $refundToken): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/refunds/resolve', ['refund_token' => $refundToken]);
+        $this->throwIfError($httpStatus, $body);
 
         return $body;
     }

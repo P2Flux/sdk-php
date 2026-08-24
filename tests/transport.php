@@ -215,5 +215,113 @@ try {
 
 check('recovery codes carry actions too', P2FluxClient::ACTIONS['PAYMENT_NOT_FOUND'] === 'RETRY_LATER');
 
+// --- the four methods that completed V1 parity (2026-08-24) ---------------------------
+
+$stub = new StubTransport([
+    '/v1/payments/resolve' => [200, ['recipient' => '0x' . str_repeat('33', 20), 'amount' => '12.500000', 'chain_id' => 8453, 'confirmations_required' => null]],
+    '/v1/subscriptions/resolve' => [200, ['amount' => '5.000000', 'period' => 2592000, 'typed_data' => ['primaryType' => 'Authorization'], 'salt' => '424242']],
+    '/v1/subscriptions/finalize' => [200, ['subscription' => 'p2s2.k1.body.mac', 'subscription_id' => '0x' . str_repeat('ab', 32), 'amount' => '5.000000', 'period' => 2592000]],
+    '/v1/refunds/resolve' => [200, ['chain_id' => 8453, 'merchant' => '0x' . str_repeat('33', 20), 'payer' => '0x' . str_repeat('55', 20), 'amount_units' => '2500000']],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+
+$resolved = $client->resolvePayment('p2f1.k1.body.mac');
+check('resolvePayment posts the intent', $stub->calls[0]['payload'] === ['intent' => 'p2f1.k1.body.mac']);
+check('and returns the display terms', $resolved['chain_id'] === 8453 && $resolved['confirmations_required'] === null);
+
+$resolved = $client->resolveSubscription('p2setup2.k1.body.mac');
+check('resolveSubscription posts the setup token', $stub->calls[1]['payload'] === ['setup_token' => 'p2setup2.k1.body.mac']);
+check('and returns the typed data to sign', ($resolved['typed_data']['primaryType'] ?? '') === 'Authorization');
+
+$finalized = $client->finalizeSubscription('p2setup2.k1.body.mac', '0x' . str_repeat('55', 20), '0x' . str_repeat('cd', 65));
+check('finalizeSubscription sends token, payer and signature', $stub->calls[2]['payload'] === [
+    'setup_token' => 'p2setup2.k1.body.mac',
+    'payer' => '0x' . str_repeat('55', 20),
+    'signature' => '0x' . str_repeat('cd', 65),
+]);
+check('and returns the charge capability', $finalized['subscription'] === 'p2s2.k1.body.mac');
+
+$resolved = $client->resolveRefund('p2refund1.k1.body.mac');
+check('resolveRefund posts the refund token', $stub->calls[3]['payload'] === ['refund_token' => 'p2refund1.k1.body.mac']);
+check('and returns what it authorizes', $resolved['amount_units'] === '2500000');
+
+$stub = new StubTransport(['/v1/subscriptions/finalize' => [400, ['error' => 'SIGNATURE_VALIDATION_TOO_EXPENSIVE']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+try {
+    $client->finalizeSubscription('p2setup2.k1.body.mac', '0x' . str_repeat('55', 20), '0x00');
+    check('an unaffordable signature throws', false);
+} catch (P2FluxException $e) {
+    check('an unaffordable signature throws', $e->status === 'SIGNATURE_VALIDATION_TOO_EXPENSIVE');
+    check('and points at the customer, the only one who can fix it', $e->action === 'CUSTOMER_ACTION_REQUIRED', $e->action);
+}
+
+// --- coverage the audit found missing --------------------------------------------------
+
+$stub = new StubTransport(['/v1/refunds/prepare' => [200, ['refund_token' => 'p2refund1.k1.body.mac', 'refund_amount_units' => '2500000']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+$prep = $client->prepareRefund(['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc'], '2500000');
+check('prepareRefund merges the amount into the original', $stub->calls[0]['payload'] === ['intent' => 'p2f1.k1.body.mac', 'tx_hash' => '0xabc', 'amount' => '2500000']);
+check('and hands back the token', $prep['refund_token'] === 'p2refund1.k1.body.mac');
+
+try {
+    new P2FluxClient(['apiUrl' => '']);
+    check('an empty apiUrl is refused', false);
+} catch (\InvalidArgumentException $e) {
+    check('an empty apiUrl is refused', true);
+}
+
+// --- the parity guard ------------------------------------------------------------------
+
+/* The checked-in list of every public V1 merchant/server operation, mirrored in the JS SDK
+ * (test/parity.test.ts) and in P2Flux/core. A new public endpoint is added to all three lists,
+ * and each SDK fails here until it grows the method - an SDK can no longer fall behind silently.
+ * Deliberately absent: /health (operational liveness), /metrics and /ready (loopback-only). */
+$REQUIRED_OPERATIONS = [
+    '/v1/payments',
+    '/v1/payments/resolve',
+    '/v1/payments/verify',
+    '/v1/payments/recover',
+    '/v1/subscriptions',
+    '/v1/subscriptions/resolve',
+    '/v1/subscriptions/finalize',
+    '/v1/charges',
+    '/v1/subscriptions/status',
+    '/v1/subscriptions/revoke/session',
+    '/v1/subscriptions/revoke/prepare',
+    '/v1/allowances/revoke/prepare',
+    '/v1/refunds/prepare',
+    '/v1/refunds/resolve',
+    '/v1/refunds/verify',
+];
+
+$stub = new StubTransport(['' => [200, ['status' => 'CHARGED', 'valid' => true, 'found' => true]]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+$hash = '0x' . str_repeat('ab', 32);
+$client->createPayment(['recipient' => '0x' . str_repeat('33', 20), 'amount' => '1.00']);
+$client->resolvePayment('p2f1.x');
+$client->verifyPayment('p2f1.x', $hash);
+$client->recoverPayment('p2f1.x');
+$client->createSubscription(['recipient' => '0x' . str_repeat('33', 20), 'amount' => '1.00', 'period' => 3600]);
+$client->resolveSubscription('p2setup2.x');
+$client->finalizeSubscription('p2setup2.x', '0x' . str_repeat('55', 20), '0x00');
+$client->charge('p2s2.x');
+$client->status('p2s2.x');
+$client->createCancellationSession('p2s2.x');
+$client->prepareSubscriptionCancellation('p2s2.x');
+$client->prepareAllowanceRevocation();
+$client->prepareRefund(['intent' => 'p2f1.x', 'tx_hash' => $hash], '1000000');
+$client->resolveRefund('p2refund1.x');
+$client->verifyRefund(['intent' => 'p2f1.x', 'tx_hash' => $hash], '1000000', $hash);
+
+$reached = array_values(array_unique(array_map(
+    static fn (array $call): string => parse_url($call['url'], PHP_URL_PATH),
+    $stub->calls
+)));
+sort($reached);
+$expected = $REQUIRED_OPERATIONS;
+sort($expected);
+check('every public V1 merchant operation is reachable through the SDK', $reached === $expected,
+    'missing: ' . implode(', ', array_diff($expected, $reached)) . ' extra: ' . implode(', ', array_diff($reached, $expected)));
+
 echo $failures === 0 ? "\nphp sdk transport OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);
