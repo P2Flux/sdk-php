@@ -6,7 +6,7 @@ dependencies. This repository is the **canonical source** for the PHP SDK.
 ```php
 use P2Flux\P2FluxClient;
 
-$p2flux = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'timeout' => 30]);
+$p2flux = new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'timeout' => 30]);
 
 $result = $p2flux->charge($subscriptionRef);   // never throws on a payment outcome
 $state  = $p2flux->status($subscriptionRef);
@@ -44,7 +44,7 @@ The `transport` option takes any callable, so a host framework supplies its own 
 
 ```php
 $p2flux = new P2FluxClient([
-    'apiUrl'    => 'https://api.p2flux.example',
+    'apiUrl'    => 'https://api.p2flux.com',
     'transport' => function (string $url, array $options): array {
         $res = wp_remote_post($url, $options);
         return [wp_remote_retrieve_response_code($res), wp_remote_retrieve_body($res)];
@@ -59,7 +59,7 @@ Not on Packagist yet. Until it is, install from this repository by tag:
 ```json
 {
   "repositories": [{ "type": "vcs", "url": "https://github.com/P2Flux/sdk-php" }],
-  "require": { "p2flux/p2flux-php": "v0.3.0" }
+  "require": { "p2flux/p2flux-php": "v0.4.0" }
 }
 ```
 
