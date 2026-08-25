@@ -44,6 +44,17 @@ request never reached the API; see the README for a working WordPress `wp_remote
 code and its recommended `action` (`WAIT`, `RETRY_LATER`, `CUSTOMER_ACTION_REQUIRED`,
 `STOP_SUBSCRIPTION`, `INVALID_REQUEST`, `SUCCESS`).
 
+## The checkout handoff (subscriptions)
+
+This client's job ends at HTTP; the hosted checkout talks to your PAGE by `postMessage`. After
+`p2flux.subscription.created` delivers the capability, your page attempts the first charge with
+`charge()` and must answer the still-open popup: `p2flux.finalized` (optional `tx_hash`) on
+success, `p2flux.activation_failed` with a bare CODE for failures your renewal job will not
+quietly recover — the `ChargeResult->action` already makes the split (`CUSTOMER_ACTION_REQUIRED`
+and `STOP_SUBSCRIPTION` are worth reporting; for `RETRY_LATER`/`WAIT` send nothing). The checkout
+owns all customer-facing wording. Full protocol:
+[p2flux.com/docs/subscriptions.html#handoff](https://p2flux.com/docs/subscriptions.html#handoff).
+
 ## Result codes
 
 The `ACTIONS` map in `P2FluxClient` is the complete list the client knows; anything unknown maps
