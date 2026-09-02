@@ -113,6 +113,11 @@ final class P2FluxClient
     /** @var null|callable(string, array<string, mixed>, int): array{0: int, 1: array<string, mixed>} */
     private $transport;
 
+    /* The curl transport, built once and only when something actually needs it. A host that passes
+     * its own transport never loads the class at all, which is the point: a WordPress plugin
+     * vendoring this SDK must be able to ship it without shipping a curl call. */
+    private static ?CurlTransport $defaultTransport = null;
+
     /**
      * @param array{apiUrl: string, timeout?: int, transport?: callable} $options
      *        timeout defaults to 60 s: a charge waits for on-chain confirmation, which on a busy
@@ -290,6 +295,89 @@ final class P2FluxClient
     }
 
     /**
+     * Find the transaction that charged one recurring period, when its hash was lost.
+     *
+     * The failure this is for: a charge lands, the response never reaches your worker, and the
+     * retry answers ALREADY_CHARGED - which proves the period was collected and names no
+     * transaction. P2Flux stores nothing, so the hash lives only in the contract's log, and without
+     * it you cannot attribute the payment to an order, audit it, or refund it: refunds start from
+     * the original settlement.
+     *
+     * The period index is required and exact. There is no "current period" form, because you are
+     * reconciling one specific collection - today, or a year from now - and the answer must not
+     * move under you. Take it from the charge response or from status().
+     *
+     * `['found' => false, 'code' => 'PAYMENT_NOT_FOUND']` is ordinary, not an error: there is no
+     * catch-up billing, so a period that was never collected is a normal history, and a later
+     * period having been charged says nothing about an earlier one. Like recoverPayment(), it is a
+     * statement about one block height rather than a permanent verdict.
+     *
+     * `$hint` (`['attempted_at' => unix seconds]` or `['block' => n]`) is where your own records say
+     * you attempted the charge. It narrows the search and nothing else - it can never turn a miss
+     * into a hit - and omitting it is always safe.
+     *
+     * @param array{attempted_at?: int, block?: int}|null $hint
+     * @return array<string, mixed>
+     */
+    public function recoverCharge(string $subscriptionRef, int $periodIndex, ?array $hint = null): array
+    {
+        $payload = ['subscription' => $subscriptionRef, 'period_index' => $periodIndex];
+        if ($hint !== null && $hint !== []) {
+            $payload['hint'] = $hint;
+        }
+
+        [$httpStatus, $body] = $this->post('/v1/charges/recover', $payload);
+
+        /* Nothing found, and a settlement still confirming, are both ANSWERS - the same rule
+         * recoverPayment() follows, and for the same reason: a caller that has just been told
+         * ALREADY_CHARGED will ask again, and an exception would make that a special case. */
+        $code = isset($body['code']) ? (string) $body['code'] : (isset($body['error']) ? (string) $body['error'] : '');
+        if ($httpStatus >= 400 && $code !== 'PAYMENT_NOT_FOUND' && $code !== 'PAYMENT_CONFIRMING') {
+            $this->throwIfError($httpStatus, $body);
+        }
+
+        return $body;
+    }
+
+    /**
+     * A session for restoring the token allowance one subscription needs.
+     *
+     * INSUFFICIENT_ALLOWANCE is not a dead subscription: the authorization the customer signed is
+     * intact and you can still collect. What ran short is the ERC-20 allowance, and the fix is one
+     * approve() from the customer's own wallet - no new signature, no new subscription.
+     *
+     * The token this returns is the narrowest P2Flux issues: the payer, the spender, the token and
+     * how much the next charge pulls. It cannot charge, cannot revoke and cannot refund. Open
+     * <checkout>/#/approve/<approve_token> and wait for `p2flux.allowance.restored`, then charge()
+     * the SAME subscription again.
+     *
+     * @return array<string, mixed>
+     */
+    public function createAllowanceRestoreSession(string $subscriptionRef): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/allowances/restore/session', ['subscription' => $subscriptionRef]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * Read an allowance-restore session back: what to approve, and who must approve it.
+     *
+     * Browser-side, like the other resolve calls - the checkout uses it to show the terms and build
+     * the customer's own approve(). A merchant server has no reason to call it.
+     *
+     * @return array<string, mixed>
+     */
+    public function resolveAllowanceRestore(string $approveToken): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/allowances/restore/resolve', ['approve_token' => $approveToken]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
      * Exchange a p2s2 for a short-lived cancellation token that can safely reach the customer's
      * browser: it carries the authorization fields needed to build revoke(), and neither the
      * customer's signature nor any ability to charge. Open <checkout>/#/cancel/<cancel_token>.
@@ -383,40 +471,17 @@ final class P2FluxClient
             return [(int) $httpStatus, is_array($body) ? $body : []];
         }
 
-        return $this->curlPost($this->apiUrl . $path, $payload);
-    }
-
-    /**
-     * @param array<string, mixed> $payload
-     * @return array{0: int, 1: array<string, mixed>}
-     */
-    private function curlPost(string $url, array $payload): array
-    {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode($payload === [] ? new \stdClass() : $payload, JSON_THROW_ON_ERROR),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-            CURLOPT_TIMEOUT => $this->timeout,
-            /* A black-holed host must fail in seconds, not hold a renewal worker for the full
-             * request timeout: connecting is never the slow part of a charge - confirmation is. */
-            CURLOPT_CONNECTTIMEOUT => min(10, $this->timeout),
-        ]);
-
-        $raw = curl_exec($ch);
-        $httpStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($raw === false || $httpStatus === 0) {
-            throw new P2FluxException('NETWORK_ERROR', 'RETRY_LATER', ['detail' => $error]);
+        if (!class_exists(CurlTransport::class)) {
+            throw new P2FluxException(
+                'NETWORK_ERROR',
+                'RETRY_LATER',
+                ['detail' => 'no transport: pass one, or load P2Flux\\CurlTransport']
+            );
         }
 
-        $body = json_decode((string) $raw, true);
-
-        return [$httpStatus, is_array($body) ? $body : []];
+        return (self::$defaultTransport ??= new CurlTransport($this->timeout))($this->apiUrl . $path, $payload, $this->timeout);
     }
+
 
     /**
      * Lock the terms of a refund the merchant is about to send from their own wallet.

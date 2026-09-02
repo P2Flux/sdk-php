@@ -13,6 +13,7 @@ declare(strict_types=1);
 require __DIR__ . '/../src/P2FluxException.php';
 require __DIR__ . '/../src/ChargeResult.php';
 require __DIR__ . '/../src/P2FluxClient.php';
+require __DIR__ . '/../src/CurlTransport.php';
 
 use P2Flux\ChargeResult;
 use P2Flux\P2FluxClient;

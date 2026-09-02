@@ -272,6 +272,56 @@ try {
 
 // --- the parity guard ------------------------------------------------------------------
 
+/* Recovering a recurring settlement. Not found is an ANSWER - there is no catch-up billing, so a
+ * period that was never collected is ordinary history - and so is a settlement still confirming. */
+$stub = new StubTransport([
+    '/v1/charges/recover' => [200, [
+        'found' => true,
+        'subscription_id' => '0x' . str_repeat('cd', 32),
+        'period_index' => 3,
+        'tx_hash' => '0xrecovered',
+        'amount_units' => '10000000',
+    ]],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+$recovered = $client->recoverCharge('p2s2.k1.body.mac', 3);
+check('recoverCharge returns the settlement of that exact period', $recovered['tx_hash'] === '0xrecovered');
+check('and asks for the period explicitly', $stub->calls[0]['payload'] === ['subscription' => 'p2s2.k1.body.mac', 'period_index' => 3]);
+
+$hinted = $client->recoverCharge('p2s2.k1.body.mac', 3, ['attempted_at' => 1700000000]);
+check('a hint rides along when given', ($stub->calls[1]['payload']['hint'] ?? null) === ['attempted_at' => 1700000000]);
+$client->recoverCharge('p2s2.k1.body.mac', 3, []);
+check('an empty hint is omitted rather than sent', !isset($stub->calls[2]['payload']['hint']));
+
+$stub = new StubTransport(['/v1/charges/recover' => [200, ['found' => false, 'code' => 'PAYMENT_NOT_FOUND', 'as_of_block' => '45688490']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+$missing = $client->recoverCharge('p2s2.k1.body.mac', 5);
+check('a period that was skipped is an answer, not an exception', $missing['found'] === false && $missing['code'] === 'PAYMENT_NOT_FOUND');
+
+$stub = new StubTransport(['/v1/charges/recover' => [409, ['found' => true, 'code' => 'PAYMENT_CONFIRMING', 'tx_hash' => '0xconfirming']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+$confirming = $client->recoverCharge('p2s2.k1.body.mac', 3);
+check('a settlement still confirming keeps its hash', $confirming['tx_hash'] === '0xconfirming');
+
+$stub = new StubTransport(['/v1/charges/recover' => [503, ['error' => 'RECOVERY_UNAVAILABLE']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+try {
+    $client->recoverCharge('p2s2.k1.body.mac', 3);
+    check('a deployment that cannot recover throws', false);
+} catch (P2FluxException $e) {
+    check('a deployment that cannot recover throws', $e->status === 'RECOVERY_UNAVAILABLE' && $e->action === 'RETRY_LATER');
+}
+
+/* The allowance-restore session: the narrowest browser-facing token, for a subscription that is
+ * still perfectly valid and just needs one approve(). */
+$stub = new StubTransport([
+    '/v1/allowances/restore/session' => [200, ['approve_token' => 'p2approve1.k1.body.mac', 'expires_at' => 1700000900, 'payer' => '0x' . str_repeat('55', 20)]],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => $stub]);
+$session = $client->createAllowanceRestoreSession('p2s2.k1.body.mac');
+check('an allowance session is issued for the payer', $session['approve_token'] === 'p2approve1.k1.body.mac');
+check('and the response carries no capability', !str_contains(json_encode($session), 'p2s2.'));
+
 /* The checked-in list of every public V1 merchant/server operation, mirrored in the JS SDK
  * (test/parity.test.ts) and in P2Flux/core. A new public endpoint is added to all three lists,
  * and each SDK fails here until it grows the method - an SDK can no longer fall behind silently.
@@ -285,10 +335,13 @@ $REQUIRED_OPERATIONS = [
     '/v1/subscriptions/resolve',
     '/v1/subscriptions/finalize',
     '/v1/charges',
+    '/v1/charges/recover',
     '/v1/subscriptions/status',
     '/v1/subscriptions/revoke/session',
     '/v1/subscriptions/revoke/prepare',
     '/v1/allowances/revoke/prepare',
+    '/v1/allowances/restore/session',
+    '/v1/allowances/restore/resolve',
     '/v1/refunds/prepare',
     '/v1/refunds/resolve',
     '/v1/refunds/verify',
@@ -305,10 +358,13 @@ $client->createSubscription(['recipient' => '0x' . str_repeat('33', 20), 'amount
 $client->resolveSubscription('p2setup2.x');
 $client->finalizeSubscription('p2setup2.x', '0x' . str_repeat('55', 20), '0x00');
 $client->charge('p2s2.x');
+$client->recoverCharge('p2s2.x', 3);
 $client->status('p2s2.x');
 $client->createCancellationSession('p2s2.x');
 $client->prepareSubscriptionCancellation('p2s2.x');
 $client->prepareAllowanceRevocation();
+$client->createAllowanceRestoreSession('p2s2.x');
+$client->resolveAllowanceRestore('p2approve1.x');
 $client->prepareRefund(['intent' => 'p2f1.x', 'tx_hash' => $hash], '1000000');
 $client->resolveRefund('p2refund1.x');
 $client->verifyRefund(['intent' => 'p2f1.x', 'tx_hash' => $hash], '1000000', $hash);
@@ -322,6 +378,15 @@ $expected = $REQUIRED_OPERATIONS;
 sort($expected);
 check('every public V1 merchant operation is reachable through the SDK', $reached === $expected,
     'missing: ' . implode(', ', array_diff($expected, $reached)) . ' extra: ' . implode(', ', array_diff($reached, $expected)));
+
+/* A host that supplies its own transport must never need curl at all.
+ *
+ * Not tidiness: WordPress.org rejects a plugin that calls curl directly, and a plugin vendoring
+ * this SDK ships the client without shipping the curl call it will never make. So the client file
+ * itself must contain no curl_ call, and the whole surface must work with CurlTransport unloaded -
+ * which is exactly the state this test process is in, since it never required that file. */
+check('the client file calls no curl function', !str_contains(file_get_contents(__DIR__ . '/../src/P2FluxClient.php'), 'curl_'));
+check('and the tests above ran with CurlTransport never loaded', !class_exists('P2Flux\\CurlTransport', false));
 
 echo $failures === 0 ? "\nphp sdk transport OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);

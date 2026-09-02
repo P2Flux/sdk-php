@@ -18,16 +18,19 @@ $setup  = $p2flux->createSubscription(['recipient' => $merchantWallet, 'amount' 
 $sub    = $p2flux->finalizeSubscription($setup['setup_token'], $payer, $signature);
 $result = $p2flux->charge($sub['subscription']);   // never throws on a payment outcome
 $state  = $p2flux->status($sub['subscription']);
+
+// Lost the response? ALREADY_CHARGED proves the period was collected and names no transaction.
+$settled = $p2flux->recoverCharge($sub['subscription'], $result->periodIndex ?? 0);
 ```
 
-This SDK covers the **complete public V1 merchant/server API** — the same 15 operations as the JS
+This SDK covers the **complete public V1 merchant/server API** — the same 18 operations as the JS
 SDK (`@p2flux/sdk`): one-time payments (create/resolve/verify with settlement receipts), recovery,
-subscription setup/resolve/finalize/charge/status, cancellation sessions and preparation, allowance
-revocation, and refunds (prepare/resolve/verify). No raw REST calls are needed for a normal
+subscription setup/resolve/finalize/charge/status, recurring settlement recovery, cancellation
+sessions and preparation, allowance revocation and repair, and refunds (prepare/resolve/verify). No raw REST calls are needed for a normal
 integration. `/health` is an operational liveness endpoint, not a merchant operation; `/metrics`
 and `/ready` are loopback-only — none belongs in an SDK.
 
-**Parity is tested, not promised.** `tests/transport.php` holds the checked-in list of all 15
+**Parity is tested, not promised.** `tests/transport.php` holds the checked-in list of all 18
 public V1 merchant operations and fails if any stops being reachable through the client; the JS
 SDK and P2Flux/core carry the same guard, so a new public operation turns every list red until
 both SDKs support it.
@@ -90,7 +93,7 @@ Not on Packagist yet. Until it is, install from this repository by tag:
 ```json
 {
   "repositories": [{ "type": "vcs", "url": "https://github.com/P2Flux/sdk-php" }],
-  "require": { "p2flux/p2flux-php": "v0.5.0" }
+  "require": { "p2flux/p2flux-php": "v0.6.0" }
 }
 ```
 

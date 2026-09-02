@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.0 - 2026-09-02
+
+### Added
+
+- **`recoverCharge($subscription, $periodIndex, $hint = null)`** — the transaction that charged one
+  recurring period. `ALREADY_CHARGED` proves a period was collected and names no transaction, so a
+  worker that lost the first response was left with a paid period it could not attribute, audit or
+  refund (refunds start from the original settlement). The period index is required and exact:
+  reconciliation is about one specific collection, today or in a year. `found => false` is ordinary
+  rather than an error — there is no catch-up billing, so a period that was never collected is a
+  normal history — and a settlement still confirming comes back with its hash, both following the
+  rule `recoverPayment()` already set.
+- **`createAllowanceRestoreSession($subscription)`** and **`resolveAllowanceRestore($token)`** —
+  `INSUFFICIENT_ALLOWANCE` is not a dead subscription: the signed authorization is intact and the
+  customer needs one `approve()`. The session is the narrowest token P2Flux issues (payer, spender,
+  token, amount) and can neither charge nor revoke nor refund; open
+  `<checkout>/#/approve/<approve_token>`, then charge the SAME subscription again.
+
+### Changed
+
+- **The curl transport moved to its own class, `P2Flux\CurlTransport`.** Nothing changes for a
+  Composer install (the client falls back to it exactly as before) but the client file no longer
+  contains a single `curl_` call, which is what lets a WordPress plugin vendor these three files and
+  pass `wp_remote_post`: WordPress.org rejects plugins that call curl directly. `ext-curl` moves
+  from `require` to `suggest` for the same reason, and the test suite proves the whole surface works
+  with `CurlTransport` never loaded.
+
 ## 0.5.0 - 2026-08-24
 
 ### Added
