@@ -1,7 +1,10 @@
 # p2flux/p2flux-php
 
 PHP client for the P2Flux payments API. PHP 8.1+, curl only, no framework and no Composer runtime
-dependencies. This repository is the **canonical source** for the PHP SDK.
+dependencies. This repository is the **canonical source** for the PHP SDK. The full integration guide is
+[`docs/guide.md`](docs/guide.md); the call-and-result contract is
+[`docs/protocol-contract.md`](docs/protocol-contract.md). Version numbers are shared with the JS
+SDK: both are v0.6.0 and expose the same eighteen public operations.
 
 ```php
 use P2Flux\P2FluxClient;

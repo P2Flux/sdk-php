@@ -13,7 +13,7 @@ This is a **merchant-server SDK**: it implements the complete public V1 server-s
 creating and resolving payment intents and subscriptions, verifying settlements, finalizing
 authorizations, requesting recurring charges, recovery, refunds, and cancellation preparation.
 The buyer-side wallet experience is the hosted checkout (`https://pay.p2flux.com`), not an SDK.
-The JS SDK (`@p2flux/sdk`) covers the same 15 public operations — full parity, guarded by a
+The JS SDK (`@p2flux/sdk`, same version number) covers the same 18 public operations — full parity, guarded by a
 checked-in parity test in both repositories.
 
 ## Calls
@@ -27,17 +27,19 @@ checked-in parity test in both repositories.
 | `createSubscription(array $terms)` | `['recipient', 'amount', 'period']` → setup token. |
 | `resolveSubscription(string $setupToken)` | Terms plus the exact EIP-712 `typed_data` the customer signs. |
 | `finalizeSubscription(string $setupToken, string $payer, string $signature)` | Signature → the `p2s2.` charge capability. |
+| `recoverCharge(string $subscription, int $periodIndex, ?array $hint = null)` | The settlement of one EXACT period, for when `ALREADY_CHARGED` left a paid period with no hash. The `SubscriptionCharged` event is the proof; the period marker is not. Not-found (a skipped period is ordinary) and confirming are results, not exceptions. A hint narrows and is never evidence. |
 | `charge(string $subscription)` | Returns a `ChargeResult`; `REFUND_CONFIRMING`/`PAYMENT_CONFIRMING`-class outcomes are results, not exceptions. |
 | `status(string $subscription)` | Period, due-ness, allowance, revocation — read from chain. |
 | `createCancellationSession(string $subscription)` | Cancel token for the hosted cancel page. |
 | `prepareSubscriptionCancellation(string $subscription)` | Calldata for the buyer's own `revoke()`. |
 | `prepareAllowanceRevocation()` | Calldata for the global allowance stop. |
+| `createAllowanceRestoreSession(string $subscription)` / `resolveAllowanceRestore(string $token)` | `INSUFFICIENT_ALLOWANCE` is not a dead subscription: the signed authorization is intact and one `approve()` fixes it. The `p2approve1` session cannot charge, revoke or refund; it opens `#/approve/<token>`. |
 | `prepareRefund(...)` / `resolveRefund(...)` / `verifyRefund(...)` | Merchant-sent refunds, verified by P2Flux. |
 
 ## Transport
 
-Default transport is curl (60 s request timeout, 10 s connect timeout, both bounded by the
-`timeout` option). A custom transport is a callable
+Default transport is `P2Flux\CurlTransport` (60 s request timeout, 10 s connect timeout, both bounded
+by the `timeout` option), loaded only when no `transport` is given - the client itself contains no curl call. A custom transport is a callable
 `fn(string $url, array $payload, int $timeout)` returning `[int $httpStatus, array $decodedBody]`
 — the body decoded, not the JSON string. Throw `P2FluxException('NETWORK_ERROR', ...)` when the
 request never reached the API; see the README for a working WordPress `wp_remote_post` example. `throwIfError()` throws `P2FluxException` only on HTTP ≥ 400, carrying the API's `error`
