@@ -4,7 +4,7 @@ PHP client for the P2Flux payments API. PHP 8.1+, curl only, no framework and no
 dependencies. This repository is the **canonical source** for the PHP SDK. The full integration guide is
 [`docs/guide.md`](docs/guide.md); the call-and-result contract is
 [`docs/protocol-contract.md`](docs/protocol-contract.md). Version numbers are shared with the JS
-SDK: both are v0.6.0 and expose the same eighteen public operations.
+SDK: both are v0.6.1 and expose the same eighteen public operations.
 
 ```php
 use P2Flux\P2FluxClient;
@@ -96,7 +96,7 @@ Not on Packagist yet. Until it is, install from this repository by tag:
 ```json
 {
   "repositories": [{ "type": "vcs", "url": "https://github.com/P2Flux/sdk-php" }],
-  "require": { "p2flux/p2flux-php": "v0.6.0" }
+  "require": { "p2flux/p2flux-php": "v0.6.1" }
 }
 ```
 

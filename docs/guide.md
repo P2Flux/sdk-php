@@ -1,10 +1,10 @@
 # P2Flux PHP SDK — integration guide
 
-`p2flux/p2flux-php` v0.6.0. A thin client over the P2Flux HTTP API: it normalizes result codes and
+`p2flux/p2flux-php` v0.6.1. A thin client over the P2Flux HTTP API: it normalizes result codes and
 nothing else. No scheduler, no storage, no retry loops — your application owns all three.
 
-The JavaScript SDK (`@p2flux/sdk`, also v0.6.0) covers the identical public protocol surface. Both
-SDKs share one version number from this release on, so "both at v0.6.0" means the same eighteen
+The JavaScript SDK (`@p2flux/sdk`, also v0.6.1) covers the identical public protocol surface. Both
+SDKs share one version number from this release on, so "both at v0.6.1" means the same eighteen
 operations, the same semantics and the same security model in both languages.
 
 - [Installation](#installation)
@@ -18,7 +18,7 @@ operations, the same semantics and the same security model in both languages.
 - [Refunds](#refunds)
 - [Security](#security)
 - [Errors and retries](#errors-and-retries)
-- [Migrating to v0.6.0](#migrating-to-v060)
+- [Migrating to v0.6.1](#migrating-to-v060)
 
 ## Installation
 
@@ -30,7 +30,7 @@ Not on Packagist yet. Install from the repository by tag, and pin the exact tag:
 ```json
 {
   "repositories": [{ "type": "vcs", "url": "https://github.com/P2Flux/sdk-php" }],
-  "require": { "p2flux/p2flux-php": "v0.6.0" }
+  "require": { "p2flux/p2flux-php": "v0.6.1" }
 }
 ```
 
@@ -184,6 +184,11 @@ $setup = $p2flux->createSubscription([
     'amount'    => '5.00',
     'period'    => 30 * 86400,
 ]);
+
+// Optional: bound the standing allowance the checkout asks for. Default is unlimited, so renewals
+// never need the wallet again. ['periods' => 12] asks for twelve charges' worth and your restore
+// flow asks again when it runs out; 'until_end' needs an end date.
+// $setup = $client->createSubscription([... , 'allowance' => ['periods' => 12]]);
 $pending->salt = $setup['salt'];
 $url = 'https://pay-test.p2flux.com/#/subscribe/' . rawurlencode($setup['setup_token']);
 
@@ -421,7 +426,7 @@ verifies later has a refunded order and, sometimes, no refund.
 | `action: INVALID_REQUEST` | Do not retry. Fix the stored reference or the request. |
 | `P2FluxException` `NETWORK_ERROR` | The request never reached the API. Retry; treat as unknown, not as declined. |
 
-## Migrating to v0.6.0
+## Migrating to v0.6.1
 
 **No change is required** for an existing integration. Every method that existed in v0.5.0 keeps
 its name, arguments and return shape.
@@ -432,4 +437,4 @@ its name, arguments and return shape.
   need nothing new.
 - `ext-curl` moved from `require` to `suggest` in `composer.json`.
 - New, opt-in: `recoverCharge()`, `createAllowanceRestoreSession()`, `resolveAllowanceRestore()`.
-  Both SDKs are v0.6.0 and expose the same eighteen operations.
+  Both SDKs are v0.6.1 and expose the same eighteen operations.
