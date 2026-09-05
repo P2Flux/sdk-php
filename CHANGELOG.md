@@ -7,10 +7,12 @@
 - **Paying the network fee in the payment currency.** `createPayment(['gas_payment_mode' =>
   'payment_token', ...])` creates a payment a buyer can complete holding only the payment token and
   none of the chain's native currency. The buyer signs one token authorization; P2Flux sends the
-  transaction and takes the quoted network cost plus a flat gas-service fee out of that same
-  authorization, so nothing is fronted on credit. `resolvePayment()` carries the price and its
+  transaction and takes the quoted network cost out of that same authorization, so nothing is
+  fronted on credit. The buyer is debited the price plus that network fee and nothing else - P2Flux's
+  percentage fee and its fixed network fee both come out of the amount, so the merchant funds them,
+  exactly as a subscription does. `resolvePayment()` carries the price and its
   expiry, `sponsorPayment($intent, $quote, $payer, $signature)` executes it, and `verifyPayment()`
-  now returns an `accounting` block naming every unit: price, P2Flux fee, network fee, gas-service
+  now returns an `accounting` block naming every unit: price, P2Flux fee, network fee, fixed network
   fee, merchant net, buyer total.
 - **`capabilities()`** — what a deployment actually supports, per token and per operation. Ask
   before offering a buyer the option: a token that is technically capable is not the same as a
@@ -36,7 +38,7 @@
 ### Unchanged
 
 - Every existing call. A payment created without `gas_payment_mode` behaves exactly as before,
-  settles through the same contract, and pays the same 1% - there is no gas-service fee outside the
+  settles through the same contract, and pays the same 1% - there is no fixed network fee outside the
   new mode. Recurring economics are untouched: 2%, the existing fixed network fee, and the buyer's
   gas reimbursement, with no second fixed fee for onboarding without native currency.
 

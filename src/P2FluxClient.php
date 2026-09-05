@@ -262,7 +262,8 @@ final class P2FluxClient
      * `gas_payment_mode` is optional. Omitted - or 'native' - is what has always happened: the buyer
      * sends the transaction and pays the network in the chain's own currency. With 'payment_token'
      * the buyer needs none of that currency: P2Flux sends the transaction and the buyer reimburses
-     * the quoted network cost in the payment token, plus a flat gas-service fee. Check
+     * the quoted network cost in the payment token. P2Flux's own fees come out of the amount, so
+     * the merchant funds them and the buyer pays no fee on top of the price. Check
      * `capabilities()` first; not every network and token supports it, and an unsupported request is
      * refused here rather than after a customer has been sent to a checkout that cannot work.
      *
