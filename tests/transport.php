@@ -345,6 +345,10 @@ $REQUIRED_OPERATIONS = [
     '/v1/refunds/prepare',
     '/v1/refunds/resolve',
     '/v1/refunds/verify',
+    // Paying the network fee in the payment currency.
+    '/v1/capabilities',
+    '/v1/payments/sponsor',
+    '/v1/allowances/restore/submit',
 ];
 
 $stub = new StubTransport(['' => [200, ['status' => 'CHARGED', 'valid' => true, 'found' => true]]]);
@@ -368,6 +372,9 @@ $client->resolveAllowanceRestore('p2approve1.x');
 $client->prepareRefund(['intent' => 'p2f1.x', 'tx_hash' => $hash], '1000000');
 $client->resolveRefund('p2refund1.x');
 $client->verifyRefund(['intent' => 'p2f1.x', 'tx_hash' => $hash], '1000000', $hash);
+$client->capabilities();
+$client->sponsorPayment('p2f1.x', 'p2gas1.x', '0x' . str_repeat('55', 20), '0x00');
+$client->submitAllowanceRestore('p2approve1.x', 'p2gas1.x', '0x00', '0x00');
 
 $reached = array_values(array_unique(array_map(
     static fn (array $call): string => parse_url($call['url'], PHP_URL_PATH),

@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.7.0 - 2026-09-05
+
+### Added
+
+- **Paying the network fee in the payment currency.** `createPayment(['gas_payment_mode' =>
+  'payment_token', ...])` creates a payment a buyer can complete holding only the payment token and
+  none of the chain's native currency. The buyer signs one token authorization; P2Flux sends the
+  transaction and takes the quoted network cost plus a flat gas-service fee out of that same
+  authorization, so nothing is fronted on credit. `resolvePayment()` carries the price and its
+  expiry, `sponsorPayment($intent, $quote, $payer, $signature)` executes it, and `verifyPayment()`
+  now returns an `accounting` block naming every unit: price, P2Flux fee, network fee, gas-service
+  fee, merchant net, buyer total.
+- **`capabilities()`** — what a deployment actually supports, per token and per operation. Ask
+  before offering a buyer the option: a token that is technically capable is not the same as a
+  network P2Flux has deployed and tested, and this reports the second.
+- **Zero-native-gas allowance repair.** `resolveAllowanceRestore($token, 'payment_token')` returns
+  the two messages a customer signs, and `submitAllowanceRestore(...)` carries them onto the chain.
+  Passing `allowance_units` of `"0"` removes the allowance, which stops collection - it does not
+  revoke the recurring authorization, which only the payer's own transaction can do.
+- New error codes with actions: `PAYMENT_TOKEN_GAS_UNSUPPORTED` (fall back to native gas),
+  `PAYMENT_TOKEN_GAS_QUOTE_EXPIRED` (requote and re-sign), `PAYMENT_TOKEN_GAS_UNAVAILABLE`,
+  `PAYMENT_TOKEN_GAS_LIMIT_EXCEEDED`, `INVALID_GAS_QUOTE`, `INSUFFICIENT_PAYMENT_TOKEN_FOR_GAS`,
+  `SPONSORED_TRANSACTION_FAILED`, `SPONSORED_PERMIT_FAILED`, `SPONSORSHIP_CONFIRMING`.
+
+### Unchanged
+
+- Every existing call. A payment created without `gas_payment_mode` behaves exactly as before,
+  settles through the same contract, and pays the same 1% - there is no gas-service fee outside the
+  new mode. Recurring economics are untouched: 2%, the existing fixed network fee, and the buyer's
+  gas reimbursement, with no second fixed fee for onboarding without native currency.
+
 ## 0.6.0 - 2026-09-02
 
 ### Added

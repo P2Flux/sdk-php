@@ -1,6 +1,6 @@
 {
   "name": "@p2flux/sdk-php",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": false,
   "description": "PHP SDK for P2Flux. This npm manifest exists only so P2Flux/core can pin this repository by tag and run the integration suite against it; composer.json is the real manifest for PHP consumers.",
   "license": "MIT",
