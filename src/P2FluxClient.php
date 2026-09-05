@@ -188,9 +188,25 @@ final class P2FluxClient
      *
      * @return array<string, mixed>
      */
-    public function resolveSubscription(string $setupToken): array
-    {
-        [$httpStatus, $body] = $this->post('/v1/subscriptions/resolve', ['setup_token' => $setupToken]);
+    /**
+     * @param string|null $payer With `payment_token`: the wallet whose allowance will be set. The
+     *                           price depends on it, which is why it is not known at creation time.
+     */
+    public function resolveSubscription(
+        string $setupToken,
+        ?string $gasPaymentMode = null,
+        ?string $payer = null
+    ): array {
+        $payload = ['setup_token' => $setupToken];
+        /* Zero-native signup: the customer holds no native currency, so instead of sending an
+         * approval they sign one, and this prices the transaction P2Flux will send for them. Both
+         * fields or neither - the quote is for a specific wallet's allowance. */
+        if ($gasPaymentMode !== null && $payer !== null) {
+            $payload['gas_payment_mode'] = $gasPaymentMode;
+            $payload['payer'] = $payer;
+        }
+
+        [$httpStatus, $body] = $this->post('/v1/subscriptions/resolve', $payload);
         $this->throwIfError($httpStatus, $body);
 
         return $body;
@@ -206,13 +222,30 @@ final class P2FluxClient
      *
      * @return array<string, mixed>
      */
-    public function finalizeSubscription(string $setupToken, string $payer, string $signature): array
-    {
-        [$httpStatus, $body] = $this->post('/v1/subscriptions/finalize', [
+    /**
+     * @param array<string,string>|null $sponsorship For a customer with no native currency: the
+     *        `quote`, `permit_signature`, `network_fee_signature` and optional `permit_nonce` they
+     *        signed at resolve. The capability is minted first and costs nothing, so a sponsorship
+     *        that fails is reported inside the response (`sponsorship.status`) rather than thrown -
+     *        the subscription exists either way, and the allowance is repairable from the restore
+     *        flow. `ALREADY_SETTLED` means a repeat of a request that already succeeded.
+     */
+    public function finalizeSubscription(
+        string $setupToken,
+        string $payer,
+        string $signature,
+        ?array $sponsorship = null
+    ): array {
+        $payload = [
             'setup_token' => $setupToken,
             'payer' => $payer,
             'signature' => $signature,
-        ]);
+        ];
+        if ($sponsorship !== null) {
+            $payload['sponsorship'] = $sponsorship;
+        }
+
+        [$httpStatus, $body] = $this->post('/v1/subscriptions/finalize', $payload);
         $this->throwIfError($httpStatus, $body);
 
         return $body;
