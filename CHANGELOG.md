@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1 - 2026-09-06
+
+### Added
+
+- Documentation for paying the network fee in USDC: a full guide section, `capabilities()` and the
+  sponsored accounting fields in `docs/protocol-contract.md`, and per-wallet limit guidance in the
+  errors table. `capabilities()` already returned `sponsor_contracts` (the client passes the body
+  through unchanged); the JS SDK gained the same field in its typed shape, so both are level again.
+- The guide has a full "Paying the network fee in USDC" section, `docs/protocol-contract.md` lists
+  `capabilities()` and the sponsored accounting fields, and `examples/network-fee-in-usdc.php` is a
+  worked end-to-end example.
+
 ## 0.7.0 - 2026-09-06
 
 Released with `payment_token` live on Base Mainnet (2026-09-06): `P2FluxSponsoredSplitter`

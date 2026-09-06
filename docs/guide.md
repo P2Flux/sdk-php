@@ -1,10 +1,10 @@
 # P2Flux PHP SDK — integration guide
 
-`p2flux/p2flux-php` v0.6.1. A thin client over the P2Flux HTTP API: it normalizes result codes and
+`p2flux/p2flux-php` v0.7.1. A thin client over the P2Flux HTTP API: it normalizes result codes and
 nothing else. No scheduler, no storage, no retry loops — your application owns all three.
 
-The JavaScript SDK (`@p2flux/sdk`, also v0.6.1) covers the identical public protocol surface. Both
-SDKs share one version number from this release on, so "both at v0.6.1" means the same eighteen
+The JavaScript SDK (`@p2flux/sdk`, also v0.7.1) covers the identical public protocol surface. Both
+SDKs share one version number, so "both at v0.7.1" means the same
 operations, the same semantics and the same security model in both languages.
 
 - [Installation](#installation)
@@ -30,7 +30,7 @@ Not on Packagist yet. Install from the repository by tag, and pin the exact tag:
 ```json
 {
   "repositories": [{ "type": "vcs", "url": "https://github.com/P2Flux/sdk-php" }],
-  "require": { "p2flux/p2flux-php": "v0.6.1" }
+  "require": { "p2flux/p2flux-php": "v0.7.1" }
 }
 ```
 
@@ -90,9 +90,7 @@ send `{}`, not `[]`.
 | Test | `https://api-test.p2flux.com` | `https://pay-test.p2flux.com` | Base Sepolia (84532), faucet USDC |
 | Production | `https://api.p2flux.com` | `https://pay.p2flux.com` | Base Mainnet (8453), real USDC |
 
-Both environments support `gas_payment_mode: 'payment_token'` — the buyer pays the network fee in
-USDC and needs no ETH; see the README section "Paying the network fee in USDC". Ask
-`capabilities()` before offering it.
+Both environments support paying the network fee in USDC — see the section below.
 
 The two are separate deployments with separate signing keys. **Every token — intent, setup token,
 capability, cancel token, refund token, approve token — is bound to the deployment that issued it**
@@ -164,6 +162,69 @@ if ($found['found'] && $found['valid']) {
 Intent expiry stops a payment being **started**; it never makes a settlement unverifiable. Keep
 every intent you ever minted for an order — a transaction prepared while the intent was live can be
 broadcast much later, and the intent is the only thing that connects it back to the order.
+
+## Paying the network fee in USDC — no ETH required
+
+Live on Base Mainnet and Base Sepolia. A buyer holding USDC and no ETH signs a token authorization
+instead of sending a transaction; P2Flux submits it and pays the Base network fee in ETH, and the
+buyer pays that cost in USDC inside the same transaction. USDC is never converted, nothing is fronted
+on credit, and settlement stays direct — your share moves from the buyer's wallet to yours in that
+one transaction.
+
+```php
+// Ask first. A token that implements the right standards on a network P2Flux has not deployed to
+// reports false, and the request is refused with PAYMENT_TOKEN_GAS_UNSUPPORTED before a buyer sees
+// anything.
+$caps = $p2flux->capabilities();
+$usdc = array_values(array_filter($caps['tokens'], fn ($t) => $t['symbol'] === 'USDC'))[0] ?? null;
+$noEthPath = $usdc !== null && in_array('payment_token', $usdc['gas_payment_modes'], true);
+
+$payment = $p2flux->createPayment([
+    'recipient' => $merchantWallet,
+    'amount' => '12.50',
+    'gas_payment_mode' => $noEthPath ? 'payment_token' : 'native',
+]);
+```
+
+Everything else is unchanged: the same intent, the same hosted checkout URL, the same
+`verifyPayment()`. The checkout prices the network fee, shows the buyer the total before anything is
+signed, re-checks the price at the moment they click, and asks them to confirm if it moved. A wallet
+that can pay its own gas is offered the ordinary path instead.
+
+The verdict tells you how it was paid and names every figure, in USDC base units:
+
+```php
+$verdict = $p2flux->verifyPayment($payment['intent'], $txHash);
+if (($verdict['valid'] ?? false) && isset($verdict['accounting'])) {
+    $verdict['gas_payment_mode'];                       // 'payment_token' or 'native'
+    $verdict['accounting']['buyer_total_units'];        // price + the quoted network fee, and nothing else
+    $verdict['accounting']['merchant_net_units'];       // price - 1% - the fixed 0.10 network fee
+    $verdict['accounting']['payment_fee_units'];        // the 1%
+    $verdict['accounting']['fixed_network_fee_units'];  // 0.10 USDC, merchant-funded, as on a renewal
+    $verdict['accounting']['network_fee_units'];        // quoted before the buyer signed; exactly what was charged
+}
+```
+
+**Who funds what does not change.** The 1% and the fixed 0.10 USDC network fee come out of the
+amount, exactly as a subscription collection works. The buyer is debited the price plus the quoted
+network fee and nothing else.
+
+**Subscriptions take the same path automatically.** A customer with no ETH can complete signup, and
+repair or remove an allowance, from the hosted checkout — no change on your side, and no additional
+fee, because a subscription already pays its fixed network fee on every collection.
+
+**Per-wallet limits.** A buyer wallet may ask P2Flux to send at most 10 sponsored transactions in any
+rolling hour and 20 in any rolling day, counted across every merchant and operation. Over that the
+API answers `RATE_LIMITED` (HTTP 429) with `retry_after` and nothing is spent; the checkout tells the
+buyer to try later, or to pay the network fee with ETH where their wallet can. Your `charge()` calls
+are never sponsored transactions and are never counted.
+
+`capabilities()` also returns `sponsor_contracts` — the contract carrying each operation. On Base
+Mainnet: `P2FluxSponsoredSplitter` `0x95E18ec05D4282acB3aab7aD60325bA4EEeEa8df` for one-time
+payments, `P2FluxGasSponsor` `0xD1DDAaa301403d18fD4A23Fc69493ef48af90285` for signup, allowance
+restore and removal. Read them from the API rather than pinning constants.
+
+Worked example: [`examples/network-fee-in-usdc.php`](../examples/network-fee-in-usdc.php).
 
 ## Recurring subscriptions
 
@@ -424,6 +485,7 @@ verifies later has a refunded order and, sometimes, no refund.
 | `action: SUCCESS` without `txHash` (`ALREADY_CHARGED`) | Mark the period collected; `recoverCharge()` for the settlement before you attribute or refund. |
 | `action: WAIT` (`CONFIRMING`, `PAYMENT_CONFIRMING`, `REFUND_CONFIRMING`) | Poll the same hash. Never a failure, never a second transaction. |
 | `action: RETRY_LATER` | Nothing was spent. Retry the identical call later, on a bounded schedule. Honour `retry_after` on 429s. |
+| `RATE_LIMITED` on a payment whose network fee is paid in USDC | The buyer wallet reached its sponsored-transaction limit (10 per rolling hour, 20 per rolling day, across all merchants). Nothing was spent. Retry after `retry_after`, or let the buyer pay the network fee with ETH. |
 | `NOT_DUE` | Retry at `nextPeriodAt`, not before. |
 | `action: CUSTOMER_ACTION_REQUIRED` | `INSUFFICIENT_BALANCE`: bounded dunning. `INSUFFICIENT_ALLOWANCE`: the approve flow; retrying alone cannot fix it. |
 | `action: STOP_SUBSCRIPTION` | Stop billing. The customer must authorize again to resume. |

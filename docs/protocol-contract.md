@@ -20,7 +20,8 @@ checked-in parity test in both repositories.
 
 | Method | Notes |
 |---|---|
-| `createPayment(array $terms)` | `['recipient', 'amount']` → intent. API enforces a 0.01 USDC minimum. |
+| `capabilities()` | Which networks, tokens and operations this deployment really supports, and which contract carries each (`sponsor_contracts`). Ask before offering `payment_token`. |
+| `createPayment(array $terms)` | `['recipient', 'amount', 'gas_payment_mode'?]` → intent. API enforces a 0.01 USDC minimum. `'payment_token'` lets a buyer holding no ETH pay by signing; the network fee is taken in USDC. |
 | `verifyPayment(string $intent, string $txHash, ?string $settlementReceipt = null)` | The trust boundary. A rejected payment is `['valid' => false, 'code' => …]` with HTTP 200 — never an exception. The optional settlement receipt (couriered from the checkout) lets the server answer without re-reading the chain; a bad one silently falls back to full verification. |
 | `recoverPayment(string $intent)` | Finds a settlement whose tx hash was lost. |
 | `resolvePayment(string $intent)` | Authoritative display terms for a checkout, read from the intent. |
@@ -35,6 +36,23 @@ checked-in parity test in both repositories.
 | `prepareAllowanceRevocation()` | Calldata for the global allowance stop. |
 | `createAllowanceRestoreSession(string $subscription)` / `resolveAllowanceRestore(string $token)` | `INSUFFICIENT_ALLOWANCE` is not a dead subscription: the signed authorization is intact and one `approve()` fixes it. The `p2approve1` session cannot charge, revoke or refund; it opens `#/approve/<token>`. |
 | `prepareRefund(...)` / `resolveRefund(...)` / `verifyRefund(...)` | Merchant-sent refunds, verified by P2Flux. |
+
+## Paying the network fee in USDC
+
+`'gas_payment_mode' => 'payment_token'` changes who sends the transaction, not who is owed what. The
+buyer signs a token authorization for `amount + quoted_network_fee`; P2Flux submits it and pays the
+Base network fee in ETH. Your share still settles directly, in that same transaction.
+
+- `capabilities()` first — a token that implements the right standards on a network P2Flux has not
+  deployed to reports `false`, and the request is refused with `PAYMENT_TOKEN_GAS_UNSUPPORTED`.
+- `verifyPayment()` and `recoverPayment()` add `gas_payment_mode` and an `accounting` block
+  (`payment_units`, `payment_fee_units`, `network_fee_units`, `fixed_network_fee_units`,
+  `merchant_net_units`, `buyer_total_units`, `payer`) — every figure in USDC base units.
+- The 1% and the fixed 0.10 USDC network fee are merchant-funded out of the amount, exactly as on a
+  subscription collection. The buyer is debited the price plus the quoted network fee and nothing else.
+- Per buyer wallet: 10 sponsored transactions in any rolling hour, 20 in any rolling day, across all
+  merchants and operations. Over that, `RATE_LIMITED` with `retry_after`; nothing is spent. Your
+  `charge()` calls are never counted.
 
 ## Transport
 
