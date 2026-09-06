@@ -90,6 +90,10 @@ send `{}`, not `[]`.
 | Test | `https://api-test.p2flux.com` | `https://pay-test.p2flux.com` | Base Sepolia (84532), faucet USDC |
 | Production | `https://api.p2flux.com` | `https://pay.p2flux.com` | Base Mainnet (8453), real USDC |
 
+Both environments support `gas_payment_mode: 'payment_token'` — the buyer pays the network fee in
+USDC and needs no ETH; see the README section "Paying the network fee in USDC". Ask
+`capabilities()` before offering it.
+
 The two are separate deployments with separate signing keys. **Every token — intent, setup token,
 capability, cancel token, refund token, approve token — is bound to the deployment that issued it**
 and is refused by the other one. An integration that lets a test-environment capability reach a

@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.7.0 - 2026-09-05
+## 0.7.0 - 2026-09-06
+
+Released with `payment_token` live on Base Mainnet (2026-09-06): `P2FluxSponsoredSplitter`
+`0x95E18ec05D4282acB3aab7aD60325bA4EEeEa8df`, `P2FluxGasSponsor` `0xD1DDAaa301403d18fD4A23Fc69493ef48af90285`.
 
 ### Added
 
