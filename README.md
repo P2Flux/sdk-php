@@ -1,6 +1,7 @@
 # P2Flux PHP SDK
 
 [![Packagist](https://img.shields.io/packagist/v/p2flux/sdk-php)](https://packagist.org/packages/p2flux/sdk-php)
+[![PHP](https://img.shields.io/packagist/dependency-v/p2flux/sdk-php/php)](https://packagist.org/packages/p2flux/sdk-php)
 
 ```bash
 composer require p2flux/sdk-php
@@ -217,6 +218,13 @@ This repository's own suite is offline and runs in a second:
 ```bash
 composer test        # transport, examples, complete flow, documentation
 ```
+
+## The other official SDK
+
+JavaScript and TypeScript: `npm install @p2flux/sdk` —
+[npm](https://www.npmjs.com/package/@p2flux/sdk) ·
+[GitHub](https://github.com/P2Flux/sdk-js). Same public operations, same semantics, same security
+model. The two are released independently, so their version numbers differ.
 
 ## Requirements
 

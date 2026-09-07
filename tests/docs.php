@@ -139,8 +139,19 @@ foreach ($pages as $page) {
     }
 
     // --- no stale package name, no stale install route, no stale version -----------------
-    check("{$name}: no stale package name", !str_contains($text, 'p2flux/p2flux-php'));
-    check("{$name}: no \"not on Packagist\" claim", stripos($text, 'not on packagist') === false);
+    /* Install routes that are no longer current. Both packages are on their own registry, and a page
+     * that still points at a git tag sends a developer down a route nobody maintains. Historical
+     * records - the changelog, dated audits - are not scanned. */
+    foreach ([
+        'p2flux/p2flux-php',
+        'composer require p2flux/p2flux-php',
+        'npm install github:P2Flux/sdk-js',
+        'github:P2Flux/sdk-js#',
+        'not on packagist',
+        'not on npm',
+    ] as $stale) {
+        check("{$name}: no \"{$stale}\"", stripos($text, $stale) === false);
+    }
 
     /* Any 0.7.x that is not the version this repository ships is stale. Derived, so a release
      * never has to remember to update a list here. */
