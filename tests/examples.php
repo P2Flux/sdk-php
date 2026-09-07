@@ -53,17 +53,21 @@ function run(string $script, array $env): array
 
 // --- every example is syntactically valid ------------------------------------------------
 
-$examples = glob($root . '/examples/*.php') ?: [];
+$examples = array_merge(
+    glob($root . '/examples/*.php') ?: [],
+    glob($root . '/examples/*/*.php') ?: []
+);
 check('examples exist', $examples !== []);
 foreach ($examples as $example) {
     $lint = [];
     exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($example) . ' 2>&1', $lint, $lintStatus);
     check('lints: ' . basename($example), $lintStatus === 0, implode(' ', $lint));
     $source = (string) file_get_contents($example);
-    check(
-        'loads composer autoload only: ' . basename($example),
-        str_contains($source, "require __DIR__ . '/../vendor/autoload.php';") && !str_contains($source, "/../src/"),
-    );
+    /* Composer's autoloader, never the sources directly. The demo's own files reach it either
+     * through their own require or through bootstrap.php, which is the one place it is loaded. */
+    $loadsAutoload = str_contains($source, "vendor/autoload.php")
+        || str_contains($source, "require __DIR__ . '/bootstrap.php';");
+    check('loads composer autoload only: ' . basename($example), $loadsAutoload && !str_contains($source, "/../src/"));
     check('no hard-coded secrets: ' . basename($example), preg_match('/0x[0-9a-fA-F]{64}/', $source) === 0);
 }
 
@@ -106,15 +110,23 @@ $base = [
     'P2FLUX_SUBSCRIPTION' => 'p2s2.k1.stub.mac',
     'P2FLUX_REFUND_UNITS' => '2500000',
     'P2FLUX_REFUND_TX_HASH' => '0x' . str_repeat('3', 64),
+    'P2FLUX_SALT' => '12345',
+    'P2FLUX_PERIOD_INDEX' => '3',
 ];
 
 $expected = [
     'create-payment.php' => 'p2f1.k1.stub.mac',
+    'create-sponsored-payment.php' => 'buyer can pay without ETH: yes',
     'verify-payment.php' => 'PAID',
+    'recover-payment.php' => 'RECOVERED',
     'network-fee-in-usdc.php' => 'paid via payment_token',
-    'subscription.php' => 'CHARGED',
+    'subscription-signup.php' => 'terms ok',
+    'charge-subscription.php' => 'CHARGED',
+    'recover-charge.php' => 'FOUND',
     'refund.php' => 'REFUNDED',
 ];
+
+check('every example is covered by this test', count($expected) === count(glob($root . '/examples/*.php') ?: []));
 
 foreach ($expected as $name => $needle) {
     [$code, $output] = run($root . '/examples/' . $name, $base);
@@ -122,14 +134,26 @@ foreach ($expected as $name => $needle) {
     check("output: {$name} contains \"{$needle}\"", str_contains($output, $needle), trim($output));
 }
 
-// --- the recovery branch, and the missing-configuration branch ---------------------------
+// --- the branches that must NOT read as success -------------------------------------------
 
-$withoutHash = $base;
-unset($withoutHash['P2FLUX_TX_HASH']);
-[$code, $output] = run($root . '/examples/verify-payment.php', $withoutHash);
-check('verify-payment.php recovers without a hash', $code === 0 && str_contains($output, 'recovered'), trim($output));
+$confirming = ['P2FLUX_TX_HASH' => '0xc0' . str_repeat('1', 62)] + $base;
+[$code, $output] = run($root . '/examples/verify-payment.php', $confirming);
+check('verify-payment.php reports confirming', $code === 0 && str_contains($output, 'CONFIRMING'), trim($output));
+check('and never says PAID for it', !str_contains($output, 'PAID'), trim($output));
 
-foreach (['create-payment.php' => 'P2FLUX_RECIPIENT', 'refund.php' => 'P2FLUX_INTENT'] as $name => $missing) {
+$rejected = ['P2FLUX_TX_HASH' => '0xbad' . str_repeat('1', 61)] + $base;
+[$code, $output] = run($root . '/examples/verify-payment.php', $rejected);
+check('verify-payment.php reports a rejection', $code === 0 && str_contains($output, 'REJECTED'), trim($output));
+
+// --- the missing-configuration branch ----------------------------------------------------
+
+foreach ([
+    'create-payment.php' => 'P2FLUX_RECIPIENT',
+    'refund.php' => 'P2FLUX_INTENT',
+    'charge-subscription.php' => 'P2FLUX_SUBSCRIPTION',
+    'recover-charge.php' => 'P2FLUX_PERIOD_INDEX',
+    'subscription-signup.php' => 'P2FLUX_SALT',
+] as $name => $missing) {
     $env = $base;
     unset($env[$missing]);
     [$code, $output] = run($root . '/examples/' . $name, $env);

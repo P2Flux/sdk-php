@@ -34,8 +34,16 @@ function check(string $label, bool $condition, string $detail = ''): void
     echo "  FAIL  {$label}  {$detail}\n";
 }
 
-$pages = array_merge([$root . '/README.md'], glob($root . '/docs/*.md') ?: []);
-check('pages found', count($pages) > 5);
+$pages = array_merge(
+    [$root . '/README.md'],
+    glob($root . '/docs/*.md') ?: [],
+    glob($root . '/docs/*/*.md') ?: [],
+    glob($root . '/examples/*/README.md') ?: []
+);
+check('pages found', count($pages) > 12, (string) count($pages));
+
+$version = (string) (json_decode((string) file_get_contents($root . '/package.json'), true)['version'] ?? '');
+check('package.json carries a version', $version !== '');
 
 $publicMethods = array_map(
     static fn (ReflectionMethod $m): string => $m->getName(),
@@ -59,23 +67,38 @@ register_shutdown_function(static function () use ($tmp): void {
 });
 
 foreach ($pages as $page) {
-    $name = basename(dirname($page)) === 'docs' ? 'docs/' . basename($page) : basename($page);
+    $name = ltrim(str_replace($root, '', $page), '/');
     $text = (string) file_get_contents($page);
 
     // --- every ```php fence parses -------------------------------------------------------
     preg_match_all('/```php\n(.*?)```/s', $text, $fences);
     foreach ($fences[1] as $index => $snippet) {
-        // Snippets are fragments: wrap them so a bare statement or a `use` line parses on its own.
-        file_put_contents($tmp, "<?php\nfunction p2fluxSnippet" . $index . "() {\n" . $snippet . "\n}\n");
-        exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($tmp) . ' 2>&1', $lint, $status);
-        if ($status !== 0) {
-            // `use` statements and top-level classes cannot live inside a function.
-            file_put_contents($tmp, "<?php\n" . $snippet . "\n");
+        /* Documentation snippets are fragments of different shapes: a whole file, a couple of
+         * statements, the body of a method, a class member, a slice of a config array. Each shape
+         * is valid PHP in its own context, so try the contexts in turn and accept the first that
+         * parses - a snippet that parses in none of them is genuinely broken. */
+        $wrappers = str_starts_with(ltrim($snippet), '<?php')
+            ? [static fn (string $s): string => $s]
+            : [
+                static fn (string $s): string => "<?php\n" . $s . "\n",
+                static fn (string $s): string => "<?php\nfunction p2fluxSnippet() {\n" . $s . "\n}\n",
+                static fn (string $s): string => "<?php\nclass P2FluxSnippet {\n" . $s . "\n}\n",
+                static fn (string $s): string => "<?php\nclass P2FluxSnippet { function m() {\n" . $s . "\n} }\n",
+                static fn (string $s): string => "<?php\n\$p2fluxSnippet = [\n" . $s . "\n];\n",
+                static fn (string $s): string => "<?php\n\$p2fluxSnippet\n" . $s . "\n;\n",
+            ];
+
+        $status = 1;
+        $lint = [];
+        foreach ($wrappers as $wrap) {
+            file_put_contents($tmp, $wrap($snippet));
             $lint = [];
             exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($tmp) . ' 2>&1', $lint, $status);
+            if ($status === 0) {
+                break;
+            }
         }
         check("{$name}: snippet " . ($index + 1) . ' parses', $status === 0, implode(' ', $lint));
-        $lint = [];
     }
 
     // --- every $p2flux->method() named anywhere on the page exists -----------------------
@@ -118,8 +141,26 @@ foreach ($pages as $page) {
     // --- no stale package name, no stale install route, no stale version -----------------
     check("{$name}: no stale package name", !str_contains($text, 'p2flux/p2flux-php'));
     check("{$name}: no \"not on Packagist\" claim", stripos($text, 'not on packagist') === false);
-    check("{$name}: no stale version string", !preg_match('/v?0\.7\.[01]\b/', $text));
-    check("{$name}: never calls it gas-free", !preg_match('/gas[- ]free/i', str_replace('not gas-free', '', $text)));
+
+    /* Any 0.7.x that is not the version this repository ships is stale. Derived, so a release
+     * never has to remember to update a list here. */
+    preg_match_all('/v?(0\.7\.\d+)\b/', $text, $versions);
+    $stale = array_values(array_unique(array_filter(
+        $versions[1],
+        static fn (string $found): bool => $found !== $version
+    )));
+    check("{$name}: no stale version string", $stale === [], implode(', ', $stale));
+
+    /* Claims this product does not support. Targeted phrases, not sentence parsing: each one is
+     * something a reader would act on, and none of them can be true of P2Flux. */
+    foreach ([
+        'webhook secret', 'webhook signature', 'verify the webhook', 'register a webhook',
+        'webhook url', 'webhook endpoint', 'configure a webhook', 'webhook handler',
+        'your api key', 'apikey', "'api_key'", 'authorization: bearer', 'x-api-key',
+        'gas-free', 'gas free', 'free transaction', 'no network fee',
+    ] as $forbidden) {
+        check("{$name}: no \"{$forbidden}\" claim", stripos($text, $forbidden) === false);
+    }
 
     // --- relative links resolve ----------------------------------------------------------
     preg_match_all('/\]\((?!https?:|#)([^)#]+)(?:#[^)]*)?\)/', $text, $links);
@@ -127,6 +168,17 @@ foreach ($pages as $page) {
         $target = realpath(dirname($page) . '/' . $link);
         check("{$name}: link {$link} resolves", $target !== false && str_starts_with($target, $root));
     }
+}
+
+// --- the two facts a developer must not be left to guess ---------------------------------
+
+foreach ([
+    'README.md' => 'no webhooks',
+    'docs/payment-flow.md' => 'no webhooks',
+    'docs/getting-started.md' => 'no API key',
+] as $page => $phrase) {
+    $text = (string) file_get_contents($root . '/' . $page);
+    check("{$page} states \"{$phrase}\"", stripos($text, $phrase) !== false);
 }
 
 // --- the install command the README promises is the package composer.json declares -------

@@ -29,6 +29,121 @@ code.
 | `action: INVALID_REQUEST` | Do not retry. Fix the stored reference or the request. |
 | `P2FluxException` `NETWORK_ERROR` | The request never reached the API. Retry; treat as unknown, not as declined. |
 
+## Recipes
+
+Each one is a real situation, what it means, and the only safe move.
+
+### The API was unreachable
+
+`P2FluxException` with `NETWORK_ERROR`, or your transport threw. `charge()` turns it into a
+`ChargeResult` with `NETWORK_ERROR` / `RETRY_LATER` instead of throwing.
+
+**The answer is "unknown", never "declined".** The operation may have happened.
+
+```php
+try {
+    $verdict = $p2flux->verifyPayment($intent, $txHash);
+} catch (P2FluxException $e) {
+    // Reads are free to repeat: verification changes nothing.
+    return $this->retryLater($e->status);
+}
+```
+
+Retry reads immediately. For a write that may have landed — a charge, a sponsorship — ask again
+rather than sending a second one: the contract answers `ALREADY_CHARGED`, and
+[Recovery](recovery.md#after-an-ambiguous-request) has the table per operation. Never cancel a
+subscription on this.
+
+### The request was invalid
+
+`action: INVALID_REQUEST` — `INVALID_REQUEST`, `AMOUNT_OUT_OF_BOUNDS`, `PERIOD_OUT_OF_BOUNDS`,
+`TERMS_MISMATCH`, `INVALID_SUBSCRIPTION`, a malformed or expired token.
+
+**Do not retry.** The same call returns the same answer forever. Fix the request, or the stored
+reference. An expired token (`INTENT_EXPIRED`, `SETUP_TOKEN_EXPIRED`) needs a new one — but note
+that expiry never makes an existing settlement unverifiable, so check
+[Recovery](recovery.md) before you assume nothing happened.
+
+### `RATE_LIMITED` (HTTP 429)
+
+Infrastructure protection: the request was refused before anything could move. Two different
+limits wear this code.
+
+| Where | Who is limited | What to do |
+|---|---|---|
+| Ordinary calls | Per IP and per subscription | Back off, honour `retry_after`, repeat the identical call |
+| A payment whose network fee is paid in USDC | Per **buyer wallet**: 10 per rolling hour, 20 per rolling day, across all merchants | Tell the buyer to try later, or offer the ordinary path where their wallet holds ETH |
+
+Nothing was spent either way, and your `charge()` calls are never counted against the buyer limit.
+
+```php
+if (($verdict['code'] ?? '') === 'RATE_LIMITED') {
+    $this->scheduleRetry(seconds: (int) ($verdict['retry_after'] ?? 60));
+}
+```
+
+### `CONCURRENCY_LIMIT`
+
+Too many simultaneous requests about the same subject. Not a payment outcome and not your quota:
+one of your own workers is probably racing another over the same subscription.
+
+Serialize per subscription, then repeat the identical call. Nothing was spent.
+
+### Sponsorship is unavailable
+
+| Code | Meaning | Move |
+|---|---|---|
+| `PAYMENT_TOKEN_GAS_UNSUPPORTED` | This deployment does not sponsor that token or operation | Fall back to `'native'`. A fact about the deployment: retrying cannot change it. Check `capabilities()` first and the buyer never sees this. |
+| `PAYMENT_TOKEN_GAS_UNAVAILABLE` | Temporarily off | Retry later, or offer the native path now |
+| `PAYMENT_TOKEN_GAS_LIMIT_EXCEEDED` | An operator-side ceiling | Retry later |
+| `INSUFFICIENT_PAYMENT_TOKEN_FOR_GAS` | The wallet cannot cover price plus network fee | The buyer tops up |
+| `SPONSORSHIP_CONFIRMING` | In flight | Look the settlement up. Never send another. |
+
+```php
+$caps = $p2flux->capabilities();
+$usdc = array_values(array_filter($caps['tokens'], fn ($t) => $t['symbol'] === 'USDC'))[0] ?? null;
+$mode = $usdc && in_array('payment_token', $usdc['gas_payment_modes'], true) ? 'payment_token' : 'native';
+```
+
+### The gas price moved
+
+`PAYMENT_TOKEN_GAS_QUOTE_EXPIRED` — the quoted network fee is stale, so the signature no longer
+matches what it would cost. Only the buyer can fix it: they requote and sign again, which the hosted
+checkout does for them.
+
+`GAS_TOO_HIGH`, `GAS_FEE_TOO_HIGH`, `GAS_QUOTE_UNAVAILABLE` on a recurring charge — gas could not be
+priced, or rose above what the subscription authorized. **Nothing was spent and the subscription is
+untouched.** Retry the charge later on a bounded schedule; there is nothing for the customer to do.
+
+### It already happened
+
+| Code | Where | What it means |
+|---|---|---|
+| `ALREADY_CHARGED` | `charge()` | Success. The period is collected. No `tx_hash` — [recover it](recovery.md#a-lost-recurring-charge) if you need to attribute or refund it. |
+| `PAYMENT_ALREADY_PROCESSED` | one-time payments | The intent is settled. Verify it rather than creating another. |
+| `ALREADY_SETTLED` | sponsored operations | A repeat of a request that already worked. Not an error. |
+
+The mistake to avoid is treating any of these as a failure and issuing a second operation.
+
+### The response never arrived
+
+You sent a charge, or a sponsorship, and the connection died mid-call. See
+[Recovery: after an ambiguous request](recovery.md#after-an-ambiguous-request) for the per-operation
+table. In short: read again, never write again — except `charge()`, whose repeat is itself the safe
+read.
+
+### Who acts, at a glance
+
+| `action` | Who | When |
+|---|---|---|
+| `SUCCESS` | you | Mark it paid |
+| `WAIT` | nobody | Poll the same hash; change nothing |
+| `RETRY_LATER` | your scheduler | Bounded retry of the identical call |
+| `CUSTOMER_ACTION_REQUIRED` | the customer | Top up, approve again, or requote |
+| `STOP_SUBSCRIPTION` | you | Stop billing; it is final |
+| `INVALID_REQUEST` | a human | Fix the call; retrying is pointless |
+
+
 ## Codes by action
 
 Straight from the `ACTIONS` map in `P2FluxClient` — the complete list this client knows.
@@ -79,5 +194,6 @@ The authoritative catalogue with per-code guidance is the
 
 ## Next
 
-- [One-time payments](payments.md)
-- [Subscriptions](subscriptions.md)
+- [The payment lifecycle](payment-flow.md) · [Recovery](recovery.md)
+- [Testing](testing.md) — a canned response per code above
+- [Production checklist](production-checklist.md)

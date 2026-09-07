@@ -4,8 +4,8 @@ Live on Base Mainnet and Base Sepolia. A buyer holding USDC and no ETH signs a t
 instead of sending a transaction; P2Flux submits it and pays the Base network fee in ETH, and the
 buyer reimburses that cost in USDC inside the same transaction.
 
-**It is not gas-free.** The network fee is real, it is quoted before the buyer signs, and the buyer
-pays it — in USDC rather than ETH. USDC is never converted, nothing is fronted on credit, and
+**Nothing is waived here.** The network fee is real, it is quoted before the buyer signs, and the
+buyer pays it — in USDC rather than in ETH. USDC is never converted, nothing is fronted on credit, and
 settlement stays direct: your share moves from the buyer's wallet to yours in that one transaction.
 
 Runnable: [`examples/network-fee-in-usdc.php`](../examples/network-fee-in-usdc.php).

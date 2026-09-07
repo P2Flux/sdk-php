@@ -27,6 +27,25 @@ composer require p2flux/sdk-php
 
 A host that supplies its own HTTP client through the `transport` option never loads `ext-curl`.
 
+## The words
+
+P2Flux's vocabulary, once, so the rest of the documentation reads plainly.
+
+| Term | What it is |
+|---|---|
+| **intent** | A signed one-time payment: recipient, amount, reference, all fixed. `createPayment()` mints it, `verifyPayment()` checks a transaction against it. Yours to store. |
+| **reference** | The on-chain identifier inside an intent. P2Flux generates it; keep your own order id beside it. |
+| **hosted checkout** | The page at `pay.p2flux.com` where the buyer's wallet does the work. Not part of this SDK. |
+| **settlement receipt** | A short-lived sealed token proving a verification already happened. Passing it back makes a repeat verify instant. |
+| **setup token** | A signed set of subscription terms, valid for fifteen minutes, that the checkout turns into a capability. |
+| **salt** | Identifies one exact setup. Compare it in `status()` to prove a capability came from the setup you created. |
+| **capability** (`p2s2…`) | The bearer credential that lets you charge a subscription. Encrypted, server-side, never in a URL or a log. |
+| **period** | One billing interval, in seconds. The contract allows one charge per period, which is what makes retries safe. |
+| **allowance** | The ERC-20 permission the customer grants. It can run out without the subscription being dead — that is `INSUFFICIENT_ALLOWANCE`. |
+| **sponsorship** | P2Flux sending the transaction for a buyer with no ETH, who reimburses the network fee in USDC. |
+| **base units** | Integer USDC: 1 USDC = 1000000. Every `_units` field is one of these. |
+
+
 ## Your first call
 
 `capabilities()` needs no credentials and moves no money — it is the quickest proof that your
@@ -123,10 +142,14 @@ that stored environment when you verify, charge, recover or refund it later.
 
 ## Where to go next
 
+- [The payment lifecycle](payment-flow.md) — the whole merchant flow, browser half included
 - [One-time payments](payments.md) — create, hosted checkout, server-side verification
 - [Paying the network fee in USDC](network-fee-in-usdc.md) — buyers who hold no ETH
 - [Subscriptions](subscriptions.md) — setup, charging, allowance repair, cancellation
 - [Refunds](refunds.md)
+- [Recovery](recovery.md) — when a response or a callback is lost
 - [Errors and retries](errors.md)
+- [Laravel](frameworks/laravel.md) · [Symfony](frameworks/symfony.md) · [Testing](testing.md)
+- [Production checklist](production-checklist.md)
 - [Call and result contract](protocol-contract.md) — every method, one table
 - [`examples/`](../examples/) — runnable versions of everything here

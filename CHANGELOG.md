@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.7.3 - 2026-09-07
+
+Documentation, examples and PHPDoc. **No behaviour changed**: every method keeps its name, arguments
+and return shape, and no API or payment path was touched.
+
+### Added
+
+- **`docs/payment-flow.md`** — the whole merchant lifecycle in one page, including the browser half
+  the SDK never sees: the checkout handshake, why `p2flux.payment.completed` is a claim, and how to
+  make the paid transition happen exactly once.
+- **`docs/recovery.md`** — `recoverPayment()`, `recoverCharge()` and a table of what to do after an
+  ambiguous request, per operation. Both other pages now link here instead of repeating it.
+- **`docs/frameworks/laravel.md`** and **`docs/frameworks/symfony.md`** — the SDK used through the
+  container: binding, constructor injection, a create action, a repeat-safe verify action, a renewal
+  command and exception mapping. No Laravel package and no Symfony bundle: neither is needed.
+- **`docs/testing.md`** — how to test an integration without spending anything: the transport
+  contract, a fake transport, a canned response per outcome worth a test, and the Laravel and
+  Symfony overrides. The SDK still ships no dev dependencies.
+- **`docs/production-checklist.md`** — short, and every line is something that has gone wrong.
+- **A recipes section in `docs/errors.md`** — API unreachable, validation, `RATE_LIMITED`,
+  `CONCURRENCY_LIMIT`, sponsorship unavailable, gas quotes, "it already happened", and who acts.
+- **A glossary in `docs/getting-started.md`** — intent, reference, capability, salt, base units.
+- **`examples/complete-payment-flow/`** — a runnable merchant integration: order, checkout
+  handshake, repeat-safe verification, recovery fallback. It runs against the canned API, so no
+  wallet, USDC or chain is involved. `tests/complete-flow.php` drives it end to end in `composer test`.
+- **More, smaller examples**, one operation each: `create-sponsored-payment.php`,
+  `recover-payment.php`, `subscription-signup.php`, `charge-subscription.php`, `recover-charge.php`.
+  `subscription.php` is gone; `network-fee-in-usdc.php` now explains the accounting block.
+
+### Changed
+
+- **PHPDoc array shapes** on every response a caller reads — `createPayment()`, `verifyPayment()`,
+  `recoverPayment()`, `recoverCharge()`, `capabilities()`, `status()`, `prepareRefund()` and the
+  rest — so PhpStorm and PHPStan can see the keys. The shapes are unsealed (`...`), so a new API
+  field never breaks a static analyser. Two methods carried a second docblock that hid the first
+  from every IDE; those are merged. No signature changed.
+- **The README** leads with the first successful integration: install, a five-minute payment, the
+  checkout flow, verify before fulfilling, USDC network fees, subscriptions, then links.
+- `tests/stub-api.php` answers `PAYMENT_CONFIRMING` for a hash starting `0xc0` and
+  `TRANSACTION_NOT_FOUND` for one starting `0xbad`, so the waiting and rejection paths are reachable
+  offline.
+- `tests/docs.php` checks documentation recursively, derives the current version from
+  `package.json` rather than a hard-coded list, and fails on claims this product does not support.
+
 ## 0.7.2 - 2026-09-07
 
 Packaging and documentation only. **No behaviour changed**: every method keeps its name, arguments

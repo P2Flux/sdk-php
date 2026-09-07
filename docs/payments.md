@@ -64,31 +64,16 @@ check, so it is always safe to pass whatever the browser handed you.
 - **Keep every intent you ever minted** for an order. A transaction prepared while the intent was
   live can be broadcast much later, and the intent is the only thing that connects it to the order.
 
-## When the callback never arrives: `recoverPayment()`
+## When the claim never arrives
 
 The popup closes, the tab crashes, the connection drops — the buyer paid and your page never heard.
-Give `recoverPayment()` the intent alone and it finds the settling transaction from the contract's
-own logs:
-
-```php
-$found = $p2flux->recoverPayment($order->p2flux_intent);
-
-if ($found['found'] && $found['valid']) {
-    $order->markPaid($found['tx_hash']);
-} elseif ($found['found']) {
-    // Located but still confirming; $found['tx_hash'] names it. Poll that hash.
-} else {
-    // PAYMENT_NOT_FOUND as of $found['as_of_block']. Not a verdict: a slow wallet can still
-    // settle. Ask again on your own schedule; never mint a second intent for the same order.
-}
-```
-
-Pure reads and idempotent, so it is safe to run from a cron over every order you are unsure about.
-It also works long after the intent expired: expiry stops a payment being **started** and never
-makes an existing settlement unverifiable.
+`recoverPayment($intent)` finds the settling transaction from the intent alone, and it still works
+long after the intent expired. See [Recovery](recovery.md).
 
 ## Next
 
+- [The payment lifecycle](payment-flow.md) — the same flow with the browser half included
 - [Paying the network fee in USDC](network-fee-in-usdc.md)
+- [Recovery](recovery.md) — when the claim never arrives
 - [Refunds](refunds.md) — a refund starts from the settlement this page produced
 - [Errors and retries](errors.md)

@@ -3,7 +3,16 @@
   "description": "P2Flux payment execution client. Your application keeps the subscription lifecycle; this charges when you say a renewal is due.",
   "type": "library",
   "license": "MIT",
-  "keywords": ["payments", "usdc", "stablecoin", "base", "subscriptions", "recurring", "checkout", "erc20"],
+  "keywords": [
+    "payments",
+    "usdc",
+    "stablecoin",
+    "base",
+    "subscriptions",
+    "recurring",
+    "checkout",
+    "erc20"
+  ],
   "homepage": "https://p2flux.com",
   "support": {
     "issues": "https://github.com/P2Flux/sdk-php/issues",
@@ -26,10 +35,12 @@
     "test": [
       "@test:transport",
       "@test:examples",
+      "@test:complete-flow",
       "@test:docs"
     ],
     "test:transport": "php tests/transport.php",
     "test:examples": "php tests/examples.php",
+    "test:complete-flow": "php tests/complete-flow.php",
     "test:docs": "php tests/docs.php"
   },
   "config": {

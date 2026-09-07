@@ -1,10 +1,11 @@
 # Subscriptions
 
-Runnable: [`examples/subscription.php`](../examples/subscription.php).
+Runnable: [`examples/subscription-signup.php`](../examples/subscription-signup.php) and
+[`examples/charge-subscription.php`](../examples/charge-subscription.php).
 
 - [How it fits together](#how-it-fits-together)
 - [Charge outcomes](#charge-outcomes)
-- [Recovering a lost charge: `recoverCharge()`](#recovering-a-lost-charge-recovercharge)
+- [Recovering a lost charge](#recovering-a-lost-charge)
 - [Restoring an allowance](#restoring-an-allowance)
 - [Cancellation and revocation](#cancellation-and-revocation)
 
@@ -132,48 +133,12 @@ The complete `ACTIONS` map in `P2FluxClient` is the list this client knows; anyt
 to `RETRY_LATER`. The authoritative catalogue is the
 [errors page](errors.md).
 
-## Recovering a lost charge: `recoverCharge()`
-
-```php
-$found = $p2flux->recoverCharge($capability, $periodIndex, ['attempted_at' => $attemptedAt]);
-```
+## Recovering a lost charge
 
 `ALREADY_CHARGED` proves a period was collected and names no transaction. Without the transaction a
-paid period cannot be attributed to an order, audited, or refunded — both refund calls start from the
-original settlement. `recoverCharge()` finds it.
-
-What it guarantees:
-
-- **The exact `SubscriptionCharged` event is the proof.** A settlement is returned only when the
-  contract's own log names this subscription AND this period, and its payer, recipient and amount
-  match the signed authorization.
-- **The contract's period marker is not proof.** `lastChargedPeriodPlusOne` is monotonic, so a marker
-  of 7 says period 6 was collected and says *nothing* about period 5. Skipped periods are ordinary:
-  there is no catch-up billing, so a period that was never collected is a normal history.
-- **`$periodIndex` is required and exact.** There is no "current period" form, because you are
-  reconciling one specific collection — today, or a year from now — and the answer must not move
-  under you. Take it from the charge result or from `status()`.
-- **The hint only narrows the search.** `['attempted_at' => unix]` or `['block' => n]` is where your
-  own records say you attempted the charge. It can never turn a miss into a hit, and omitting it is
-  always safe. Persist your attempt times; they turn a search over a whole billing period into one
-  log query.
-
-| Result | Meaning |
-|---|---|
-| `found: true` + `tx_hash`, `block_number`, `payer`, `recipient`, `net_units`, `fee_units`, `network_fee_units`, `amount_units` | The settlement. Check `subscription_id`, `period_index`, `recipient` and `amount_units` against what you expected before you act on it. |
-| `found: false`, `code: PAYMENT_NOT_FOUND`, `as_of_block` | No settlement for this period as of that block. Ordinary for a skipped period; a statement about one block height, never a permanent verdict. Returned, not thrown. |
-| `PAYMENT_CONFIRMING` (409) | A settlement exists and is not deep enough to act on. `tx_hash` rides along; ask again about that same one. Returned, not thrown. |
-| `RECOVERY_UNAVAILABLE` (503) | The search could not be completed within its bounded budget on this deployment. Retryable; throws. |
-| `PAYMENT_RECOVERY_INCONSISTENT` (502) | A log exists and contradicts the signed terms. Rare and abnormal; throws. Never treat as a payment. |
-
-### Long periods
-
-A charge can land anywhere inside its period, and a period can be 366 days — about 15.8 million
-blocks on Base, far more than one request may scan. The API bisects the contract's own marker over
-historical state and reads one log range at the crossing block, so a yearly period costs about the
-same as an hourly one. On an RPC provider that does not serve historical state it falls back to
-scanning the period window under a bounded budget, and when even that cannot finish it answers
-`RECOVERY_UNAVAILABLE` — never a wrong `found: true`.
+paid period cannot be attributed to an order, audited, or refunded — both refund calls start from
+the original settlement. `recoverCharge($capability, $periodIndex)` finds it, and the exact
+`SubscriptionCharged` event is the proof. See [Recovery](recovery.md).
 
 ## Restoring an allowance
 
@@ -216,5 +181,6 @@ Never send the `p2s2` capability to a browser to arrange any of this. It can cha
 ## Next
 
 - [Errors and retries](errors.md)
+- [Recovery](recovery.md) — the settlement behind an `ALREADY_CHARGED`
 - [Refunds](refunds.md) — refunds are per charge, never per subscription
 - [Paying the network fee in USDC](network-fee-in-usdc.md) — signup and allowance repair for a customer with no ETH

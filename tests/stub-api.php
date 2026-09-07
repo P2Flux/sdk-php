@@ -12,6 +12,8 @@ declare(strict_types=1);
  */
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$request = json_decode(file_get_contents('php://input') ?: '[]', true);
+$request = is_array($request) ? $request : [];
 
 $responses = [
     '/v1/capabilities' => [
@@ -103,6 +105,18 @@ $responses = [
     ],
     '/v1/refunds/verify' => ['status' => 'REFUNDED', 'refund_tx_hash' => '0x' . str_repeat('3', 64)],
 ];
+
+/* Two request-aware answers, so the examples and the complete-flow demo can exercise the branches
+ * that matter without a chain: a transaction that is still confirming, and one that settles nothing.
+ * Everything else is a flat replay. */
+if ($path === '/v1/payments/verify') {
+    $txHash = (string) ($request['tx_hash'] ?? '');
+    if (str_starts_with($txHash, '0xc0')) {
+        $responses[$path] = ['valid' => false, 'code' => 'PAYMENT_CONFIRMING', 'tx_hash' => $txHash];
+    } elseif (str_starts_with($txHash, '0xbad')) {
+        $responses[$path] = ['valid' => false, 'code' => 'TRANSACTION_NOT_FOUND'];
+    }
+}
 
 header('Content-Type: application/json');
 if (!isset($responses[$path])) {
