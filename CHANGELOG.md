@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.2 - 2026-09-07
+
+Packaging and documentation only. **No behaviour changed**: every method keeps its name, arguments
+and return shape, and no API or payment path was touched.
+
+### Changed
+
+- **The Composer package is `p2flux/sdk-php`** and is published on Packagist, so installation is
+  `composer require p2flux/sdk-php` — no `repositories` block and no VCS pin. The namespace,
+  `P2Flux\`, and the PSR-4 layout are unchanged; the old name was never published anywhere.
+- `composer.json` carries production metadata (keywords, homepage, issue/source/docs links) and
+  `composer test`, which runs the whole offline suite.
+- The README is a standalone entry point: install, requirements, a five-minute quickstart,
+  configuration, the USDC-network-fee flow, error handling and links to everything else.
+- The integration guide was split into one page per topic — `docs/getting-started.md`,
+  `docs/payments.md`, `docs/network-fee-in-usdc.md`, `docs/subscriptions.md`, `docs/refunds.md` and
+  `docs/errors.md`. `docs/guide.md` is now the index.
+- Every example loads `vendor/autoload.php` and reads its configuration from the environment, and
+  fails with the missing variable's name rather than a stack trace. `examples/one-time.php` is now
+  `examples/create-payment.php`.
+
+### Added
+
+- `examples/verify-payment.php` — server-side verification and the `recoverPayment()` fallback.
+  P2Flux sends no webhooks; this is the trust boundary, and the documentation now says so plainly.
+- `tests/examples.php` runs every example against `tests/stub-api.php`, a canned API on loopback,
+  and `tests/docs.php` checks that every documented class, method, option and snippet still exists
+  and parses. Both are offline and part of `composer test`.
+- `.gitattributes` keeps the Composer dist archive to the library itself.
+
 ## 0.7.1 - 2026-09-06
 
 ### Added

@@ -3,64 +3,96 @@
 declare(strict_types=1);
 
 /**
- * A subscription, end to end: create the terms, let the customer authorize on the hosted
- * checkout, store the capability, charge each period from your own renewal job, and hand the
- * customer a safe way to cancel.
+ * A subscription: create the terms, let the customer authorize on the hosted checkout, then charge
+ * each period from YOUR renewal job. P2Flux has no scheduler and stores nothing.
  *
- * Production is real USDC on Base Mainnet. Set P2FLUX_API_URL=https://api-test.p2flux.com
- * (Base Sepolia, faucet money) while integrating.
+ * Run it:
+ *   P2FLUX_RECIPIENT=0xYourPayoutWallet php examples/subscription.php
+ *   P2FLUX_SUBSCRIPTION=p2s2... php examples/subscription.php   # the renewal half
+ *
+ * The capability (`p2s2...`) is what the checkout hands your success page. It is a bearer token:
+ * server-side only, encrypted at rest, never in a URL or a log.
  */
 
-// In your project: require 'vendor/autoload.php'. Inside this repository the sources load directly.
-require __DIR__ . '/../src/P2FluxException.php';
-require __DIR__ . '/../src/ChargeResult.php';
-require __DIR__ . '/../src/P2FluxClient.php';
-require __DIR__ . '/../src/CurlTransport.php';
+require __DIR__ . '/../vendor/autoload.php';
 
 use P2Flux\P2FluxClient;
+use P2Flux\P2FluxException;
 
-$p2flux = new P2FluxClient(['apiUrl' => getenv('P2FLUX_API_URL') ?: 'https://api.p2flux.com']);
+function p2fluxEnv(string $name, ?string $default = null): string
+{
+    $value = getenv($name);
+    if ($value === false || $value === '') {
+        if ($default !== null) {
+            return $default;
+        }
+        fwrite(STDERR, "Missing required environment variable {$name}\n");
+        exit(1);
+    }
 
-// 1. Create the terms when the customer picks a plan. Period is SECONDS (30 days here).
-$setup = $p2flux->createSubscription([
-    'recipient' => '0x1111111111111111111111111111111111111111', // example address - use your own
-    'amount'    => '5.00',
-    'period'    => 30 * 86400,
-]);
-
-// 2. Keep $setup['salt'] with your pending order, then send the customer to the hosted checkout.
-//    Their wallet approves USDC and signs one EIP-712 authorization; no further prompts ever.
-echo 'send customer to https://pay.p2flux.com/#/subscribe/' . $setup['setup_token'] . PHP_EOL;
-
-// 3. The hosted checkout finalizes and returns the capability to your success handler. If you run
-//    your OWN checkout page instead, finalize server-side with the signature it collected:
-$payerAddress = '0x2222222222222222222222222222222222222222';
-$eip712Signature = '0x...';
-$finalized = $p2flux->finalizeSubscription($setup['setup_token'], $payerAddress, $eip712Signature);
-
-// 4. Store $finalized['subscription'] (the p2s2 capability) - encrypted at rest, never in a URL
-//    or log. It is the ONE thing you keep; everything else is read back from the chain on demand.
-$capability = $finalized['subscription'];
-
-// 5. Your renewal job - yours, on your schedule; P2Flux has no scheduler - charges each period:
-$result = $p2flux->charge($capability);
-if ($result->ok) {
-    echo 'period ' . $result->periodIndex . ' paid ' . ($result->alreadyPaid ? '(recovered)' : $result->txHash) . PHP_EOL;
-} elseif ($result->status === 'CONFIRMING') {
-    echo 'on chain, not yet settled - keep the period open and ask again; never charge twice' . PHP_EOL;
-} elseif ($result->action === 'STOP_SUBSCRIPTION') {
-    echo 'customer revoked or subscription ended: ' . $result->status . PHP_EOL;
-} elseif ($result->action === 'CUSTOMER_ACTION_REQUIRED') {
-    echo 'customer must top up or restore the allowance: ' . $result->status . PHP_EOL;
-} else {
-    echo 'retry later: ' . $result->status . PHP_EOL;
+    return $value;
 }
 
-// 6. Reconcile any time from the chain - after downtime, before dunning, in support tooling:
-$state = $p2flux->status($capability);
-echo 'due: ' . var_export($state['due'] ?? null, true) . ' charged this period: ' . var_export($state['charged_this_period'] ?? null, true) . PHP_EOL;
+$checkoutUrl = p2fluxEnv('P2FLUX_CHECKOUT_URL', 'https://pay.p2flux.com');
+$p2flux = new P2FluxClient(['apiUrl' => p2fluxEnv('P2FLUX_API_URL', 'https://api.p2flux.com')]);
+$capability = getenv('P2FLUX_SUBSCRIPTION') ?: null;
 
-// 7. Cancellation: never give the browser the capability - it can charge. Hand it a session:
-$session = $p2flux->createCancellationSession($capability);
-echo 'cancel page: https://pay.p2flux.com/#/cancel/' . $session['cancel_token'] . PHP_EOL;
-// Only the customer's own wallet can actually revoke; P2Flux prepares the calldata for it.
+try {
+    if ($capability === null) {
+        // 1. Setup. `period` is in SECONDS. Keep the returned salt with your pending order: it is
+        //    how you prove later that the capability you received belongs to this exact setup.
+        $setup = $p2flux->createSubscription([
+            'recipient' => p2fluxEnv('P2FLUX_RECIPIENT'),
+            'amount' => p2fluxEnv('P2FLUX_AMOUNT', '5.00'),
+            'period' => (int) p2fluxEnv('P2FLUX_PERIOD', (string) (30 * 86400)),
+            // Optional: bound the standing allowance the checkout asks for. Default is unlimited.
+            // 'allowance' => ['periods' => 12],
+        ]);
+
+        echo 'salt      ' . $setup['salt'] . PHP_EOL;
+        echo 'checkout  ' . $checkoutUrl . '/#/subscribe/' . rawurlencode($setup['setup_token']) . PHP_EOL;
+        echo 'next      store the p2s2 capability the checkout posts back, then re-run with' . PHP_EOL;
+        echo '          P2FLUX_SUBSCRIPTION=<capability> to charge a period' . PHP_EOL;
+        exit(0);
+    }
+
+    // 2. Before storing a capability, prove it is the subscription THIS order set up - a
+    //    cryptographically valid capability can still be the wrong one.
+    $state = $p2flux->status($capability);
+    echo 'terms     ' . $state['terms']['amount_units'] . ' units every ' . $state['terms']['period'] . 's' . PHP_EOL;
+    echo 'due       ' . var_export($state['due'] ?? null, true) . PHP_EOL;
+
+    // 3. Your renewal job charges when YOUR schedule says the period is due. charge() never throws
+    //    on a payment outcome: classify on ->action, so an unknown code still lands correctly.
+    $result = $p2flux->charge($capability);
+
+    if ($result->ok && $result->txHash !== null) {
+        echo 'CHARGED   period ' . $result->periodIndex . ' ' . $result->txHash . PHP_EOL;
+    } elseif ($result->ok) {
+        // ALREADY_CHARGED: the period is collected and names no transaction. recoverCharge() finds
+        // the settlement when you need it to attribute, audit or refund the period.
+        $found = $p2flux->recoverCharge($capability, (int) $result->periodIndex);
+        echo 'ALREADY   period ' . $result->periodIndex . ' ' . ($found['tx_hash'] ?? 'settlement not located yet') . PHP_EOL;
+    } elseif ($result->status === 'CONFIRMING') {
+        echo 'CONFIRMING ' . $result->txHash . ' - keep the period open, never charge twice' . PHP_EOL;
+    } else {
+        echo match ($result->action) {
+            'RETRY_LATER' => 'retry later: ' . $result->status . PHP_EOL,
+            'CUSTOMER_ACTION_REQUIRED' => 'customer must act: ' . $result->status . PHP_EOL,
+            'STOP_SUBSCRIPTION' => 'stop billing: ' . $result->status . PHP_EOL,
+            default => 'needs a human: ' . $result->status . PHP_EOL,
+        };
+    }
+
+    // 4. INSUFFICIENT_ALLOWANCE is not a dead subscription - one approve() from the customer fixes
+    //    it, and the signed authorization stays intact:
+    //      $session = $p2flux->createAllowanceRestoreSession($capability);
+    //      open $checkoutUrl . '/#/approve/' . rawurlencode($session['approve_token']);
+
+    // 5. Cancellation: never hand a browser the capability, it can charge. Hand it a session token.
+    $session = $p2flux->createCancellationSession($capability);
+    echo 'cancel    ' . $checkoutUrl . '/#/cancel/' . rawurlencode($session['cancel_token']) . PHP_EOL;
+} catch (P2FluxException $e) {
+    fwrite(STDERR, 'P2Flux refused the request: ' . $e->status . ' (' . $e->action . ')' . PHP_EOL);
+    exit(1);
+}

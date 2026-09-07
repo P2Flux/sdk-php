@@ -1,0 +1,7 @@
+# Keep the Composer dist archive to the library itself. The npm pin used by P2Flux/core clones the
+# git repository rather than an export, so it still sees tests/ and package.json.
+/tests            export-ignore
+/package.json     export-ignore
+/.gitleaks.toml   export-ignore
+/.gitattributes   export-ignore
+/.gitignore       export-ignore

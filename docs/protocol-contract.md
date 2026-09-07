@@ -13,7 +13,7 @@ This is a **merchant-server SDK**: it implements the complete public V1 server-s
 creating and resolving payment intents and subscriptions, verifying settlements, finalizing
 authorizations, requesting recurring charges, recovery, refunds, and cancellation preparation.
 The buyer-side wallet experience is the hosted checkout (`https://pay.p2flux.com`), not an SDK.
-The JS SDK (`@p2flux/sdk`, same version number) covers the same 18 public operations — full parity, guarded by a
+The JS SDK (`@p2flux/sdk`) covers the same 18 public operations — full parity, guarded by a
 checked-in parity test in both repositories.
 
 ## Calls
