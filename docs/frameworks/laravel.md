@@ -1,9 +1,27 @@
 # Laravel
 
-There is no P2Flux Laravel package, and none is needed. The SDK is a plain PHP class with no
-framework ties: bind it once in the container and inject it like any other service.
+**There is an official Laravel package, and it is the recommended way in:**
 
-Tested shape: Laravel 11/12 on PHP 8.2+. Nothing here is Laravel-version-specific.
+```bash
+composer require p2flux/laravel
+```
+
+[`p2flux/laravel`](https://packagist.org/packages/p2flux/laravel) does exactly what this page
+describes by hand — binds `P2Flux\P2FluxClient` in the container from config, adds a publishable
+config file, an optional facade and an `artisan about` section — and nothing more. It installs this
+SDK for you, adds no routes, migrations, models or scheduler, and is tested on Laravel 12 and 13.
+
+Its guides carry the Laravel-specific detail:
+[getting started](https://github.com/P2Flux/laravel/blob/main/docs/getting-started.md) ·
+[payments](https://github.com/P2Flux/laravel/blob/main/docs/payments.md) ·
+[network fee in USDC](https://github.com/P2Flux/laravel/blob/main/docs/network-fee-in-usdc.md) ·
+[subscriptions](https://github.com/P2Flux/laravel/blob/main/docs/subscriptions.md) ·
+[testing](https://github.com/P2Flux/laravel/blob/main/docs/testing.md) ·
+[production checklist](https://github.com/P2Flux/laravel/blob/main/docs/production-checklist.md) ·
+[examples](https://github.com/P2Flux/laravel/tree/main/examples)
+
+The rest of this page is the manual wiring, kept for applications that would rather not add a
+package, or that run a Laravel version the package does not support.
 
 ## Install
 
