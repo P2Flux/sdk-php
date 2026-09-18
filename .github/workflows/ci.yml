@@ -31,4 +31,13 @@ jobs:
       - name: Lint
         run: find src tests examples -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
       - run: composer test
-      - run: composer audit
+      # The SDK requires only php and ext-json, and Composer exits 1 when asked to audit nothing.
+      # So: audit the lock file the moment it ever holds a package, and say so plainly until then.
+      - name: Dependency audit
+        run: |
+          COUNT=$(php -r '$l = json_decode(file_get_contents("composer.lock"), true); echo count($l["packages"] ?? []) + count($l["packages-dev"] ?? []);')
+          if [ "$COUNT" = "0" ]; then
+            echo "composer.lock holds no packages - nothing to audit"
+          else
+            composer audit --locked
+          fi
