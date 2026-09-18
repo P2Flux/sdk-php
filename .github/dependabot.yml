@@ -1,0 +1,14 @@
+# Dependabot version updates are free on every GitHub plan. Monthly and capped, so this is a nudge
+# rather than a stream of pull requests.
+version: 2
+updates:
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
