@@ -185,6 +185,21 @@ if (!$result['allow']) {
   an hour instead of per request.
 - Laravel: `p2flux/laravel` ships this as the `p2flux.paywall` middleware.
 
+**Usage pricing** - when the cost is known only after the work. The agent signs for at most
+`$maxPrice`; you charge what it cost (at least 0.01):
+
+```php
+$result = $paywall->usage($_SERVER['HTTP_PAYMENT_SIGNATURE'] ?? null, $currentUrl, '1', function () {
+    $rows = run_query();
+    return ['amount' => number_format(count($rows) * 0.001, 6, '.', ''), 'value' => $rows];
+});
+if (!$result['allow']) { /* send $result['status'], $result['headers'], json $result['body'] */ }
+// send $result['headers'] and $result['value']
+```
+
+The work runs only after P2Flux confirmed the payment will settle; if the settlement then fails, the
+value is not returned.
+
 See [`examples/paywall.php`](examples/paywall.php).
 
 ## Framework examples

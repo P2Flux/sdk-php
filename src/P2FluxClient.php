@@ -815,9 +815,10 @@ final class P2FluxClient
      *
      * @return array{x402Version: int, accepts: list<array<string, mixed>>, ttl: int}
      */
-    public function paywallChallenge(string $recipient, string $price): array
+    public function paywallChallenge(string $recipient, string $price, bool $usage = false): array
     {
-        [$httpStatus, $body] = $this->post('/x402/paywall/challenge', ['recipient' => $recipient, 'price' => $price]);
+        // $usage: $price is the MOST one request can cost; the agent signs for up to it (x402 `upto`).
+        [$httpStatus, $body] = $this->post('/x402/paywall/challenge', ['recipient' => $recipient, 'price' => $price] + ($usage ? ['usage' => true] : []));
         $this->throwIfError($httpStatus, $body);
 
         return $body;
@@ -831,14 +832,29 @@ final class P2FluxClient
      *
      * @return array{paid: bool, reason?: string, message?: string, transaction?: string, payer?: string, amount?: string, network?: string, payment_response?: string, scheme?: string, receipt?: string, payment_required?: string}
      */
-    public function paywallRedeem(string $recipient, string $price, string $paymentHeader, string $resource = ''): array
+    public function paywallRedeem(string $recipient, string $price, string $paymentHeader, string $resource = '', ?string $amount = null): array
     {
+        // $amount: usage pricing only - what the request cost, at most $price.
         [$httpStatus, $body] = $this->post('/x402/paywall/redeem', [
             'recipient' => $recipient,
             'price' => $price,
             'payment' => $paymentHeader,
             'resource' => substr($resource, 0, 2048),
-        ]);
+        ] + ($amount !== null ? ['amount' => $amount] : []));
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * x402 paywall, usage pricing: will the agent's payment settle, for up to `$maxPrice`? Nothing
+     * moves. Do the work after `valid: true`, then `paywallRedeem(..., $amount)` with what it cost.
+     *
+     * @return array{valid: bool, payer?: string, reason?: string, message?: string}
+     */
+    public function paywallVerify(string $recipient, string $maxPrice, string $paymentHeader): array
+    {
+        [$httpStatus, $body] = $this->post('/x402/paywall/verify', ['recipient' => $recipient, 'price' => $maxPrice, 'payment' => $paymentHeader]);
         $this->throwIfError($httpStatus, $body);
 
         return $body;

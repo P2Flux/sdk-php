@@ -71,7 +71,7 @@ final class Paywall
     }
 
     /** Whether a request is an AI agent or a program rather than a person's browser. */
-    public static function isAgent(?string $userAgent, bool $hasPayment): bool
+    public static function isAgent(?string $userAgent, bool $hasPayment, bool $signed = false): bool
     {
         if ($hasPayment) {
             return true;
@@ -84,6 +84,10 @@ final class Paywall
             if (stripos($ua, $never) !== false) {
                 return false;
             }
+        }
+        // Browsers do not sign requests as bots (Web Bot Auth: a Signature-Agent header). Not verified here.
+        if ($signed) {
+            return true;
         }
         foreach (self::AGENT_SIGNATURES as $signature) {
             if (stripos($ua, $signature) !== false) {
@@ -99,7 +103,7 @@ final class Paywall
      *
      * @param string|null $paymentHeader the PAYMENT-SIGNATURE (or legacy X-PAYMENT) header, null if none
      * @param string      $url           the full URL the client asked for
-     * @param array{price?: string, mimeType?: string} $overrides
+     * @param array{price?: string, mimeType?: string, signed?: bool} $overrides signed: the request carries a Signature-Agent header (Web Bot Auth)
      * @return array{allow: true, paid: bool, headers: array<string, string>, payer?: string, transaction?: string, receipt?: string, scheme?: string}
      *        |array{allow: false, status: int, headers: array<string, string>, body: array<string, mixed>}
      *
@@ -109,7 +113,7 @@ final class Paywall
     {
         $price = (string) ($overrides['price'] ?? $this->price);
         $mimeType = (string) ($overrides['mimeType'] ?? 'text/html');
-        if ($this->agentsOnly && !self::isAgent($userAgent, $paymentHeader !== null)) {
+        if ($this->agentsOnly && !self::isAgent($userAgent, $paymentHeader !== null, (bool) ($overrides['signed'] ?? false))) {
             return ['allow' => true, 'paid' => false, 'headers' => []];
         }
         if ($paymentHeader === null) {
@@ -149,6 +153,16 @@ final class Paywall
             return $result;
         }
 
+        // The agent took its unused prepaid balance back: the receipt, no content.
+        if (($answer['refunded'] ?? false) === true && is_string($answer['payment_response'] ?? null)) {
+            return [
+                'allow' => false,
+                'status' => 200,
+                'headers' => ['PAYMENT-RESPONSE' => $answer['payment_response']] + self::NO_STORE,
+                'body' => ['refunded' => true],
+            ];
+        }
+
         $reason = is_string($answer['reason'] ?? null) ? $answer['reason'] : 'payment_refused';
         if ($reason === 'invalid_transaction_state') {
             $this->remember($usedKey);
@@ -168,6 +182,73 @@ final class Paywall
         return $this->required($price, $url, $mimeType, $reason);
     }
 
+    /**
+     * Usage pricing: the agent signs for at most `$maxPrice` (x402 `upto`); `$work` runs only after
+     * P2Flux confirmed the payment will settle and returns `['amount' => '0.23', 'value' => ...]` -
+     * what the request cost. If the settlement then fails, the value is NOT returned.
+     *
+     * @param callable(): array{amount: string, value: mixed} $work
+     * @return array{allow: true, paid: bool, headers: array<string, string>, value: mixed, amount?: string, payer?: string, transaction?: string}
+     *        |array{allow: false, status: int, headers: array<string, string>, body: array<string, mixed>}
+     *
+     * @throws P2FluxException when P2Flux rejects YOUR configuration or an amount above the maximum
+     */
+    public function usage(?string $paymentHeader, string $url, string $maxPrice, callable $work, ?string $userAgent = null, string $mimeType = 'application/json'): array
+    {
+        if ($this->agentsOnly && !self::isAgent($userAgent, $paymentHeader !== null)) {
+            return ['allow' => true, 'paid' => false, 'headers' => [], 'value' => $work()['value']];
+        }
+        if ($paymentHeader === null) {
+            return $this->required($maxPrice, $url, $mimeType, null, true);
+        }
+        $paymentHeader = trim($paymentHeader);
+        if (strlen($paymentHeader) > self::MAX_HEADER || preg_match('/^[A-Za-z0-9+\/]+={0,2}$/', $paymentHeader) !== 1) {
+            return $this->required($maxPrice, $url, $mimeType, 'invalid_payload', true);
+        }
+        $usedKey = 'p2flux_paywall_used_' . hash('sha256', $paymentHeader);
+        if ($this->cacheGet !== null && ($this->cacheGet)($usedKey) !== null) {
+            return $this->required($maxPrice, $url, $mimeType, 'invalid_transaction_state', true);
+        }
+        try {
+            $verdict = $this->client->paywallVerify($this->recipient, $maxPrice, $paymentHeader);
+        } catch (P2FluxException $e) {
+            if ($e->action === 'INVALID_REQUEST') {
+                throw $e;
+            }
+
+            return $this->unavailable();
+        }
+        if (($verdict['valid'] ?? false) !== true) {
+            return $this->required($maxPrice, $url, $mimeType, is_string($verdict['reason'] ?? null) ? $verdict['reason'] : 'payment_refused', true);
+        }
+
+        $done = $work();
+        try {
+            $answer = $this->client->paywallRedeem($this->recipient, $maxPrice, $paymentHeader, $url, (string) $done['amount']);
+        } catch (P2FluxException $e) {
+            if ($e->action === 'INVALID_REQUEST') {
+                throw $e;
+            }
+
+            return $this->unavailable();
+        }
+        if (($answer['paid'] ?? false) !== true) {
+            return $this->required($maxPrice, $url, $mimeType, is_string($answer['reason'] ?? null) ? $answer['reason'] : 'payment_refused', true);
+        }
+        $this->remember($usedKey);
+        $out = ['allow' => true, 'paid' => true, 'headers' => self::NO_STORE, 'value' => $done['value']];
+        if (is_string($answer['payment_response'] ?? null)) {
+            $out['headers'] = ['PAYMENT-RESPONSE' => $answer['payment_response']] + self::NO_STORE;
+        }
+        foreach (['amount', 'payer', 'transaction'] as $key) {
+            if (is_string($answer[$key] ?? null)) {
+                $out[$key] = $answer[$key];
+            }
+        }
+
+        return $out;
+    }
+
     private function remember(string $key): void
     {
         if ($this->cacheSet !== null) {
@@ -176,13 +257,13 @@ final class Paywall
     }
 
     /** @return array<string, mixed> */
-    private function required(string $price, string $url, string $mimeType, ?string $error): array
+    private function required(string $price, string $url, string $mimeType, ?string $error, bool $usage = false): array
     {
-        $cacheKey = 'p2flux_paywall_ch_' . md5(strtolower($this->recipient) . '|' . $price);
+        $cacheKey = 'p2flux_paywall_ch_' . md5(strtolower($this->recipient) . '|' . $price . ($usage ? '|upto' : ''));
         $accepts = $this->cacheGet !== null ? ($this->cacheGet)($cacheKey) : null;
         if (!is_array($accepts) || $accepts === []) {
             try {
-                $challenge = $this->client->paywallChallenge($this->recipient, $price);
+                $challenge = $this->client->paywallChallenge($this->recipient, $price, $usage);
             } catch (P2FluxException $e) {
                 if ($e->action === 'INVALID_REQUEST') {
                     throw $e;

@@ -8,6 +8,11 @@
   `P2Flux\Paywall` (`guard($paymentHeader, $url, $userAgent)`), and the two calls under it,
   `P2FluxClient::paywallChallenge()` and `paywallRedeem()`. Pay-per-request and prepaid balance; the
   payment is settled before anything is served and serves one response. `examples/paywall.php`.
+- **Usage pricing** — `Paywall::usage($paymentHeader, $url, $maxPrice, $work)` and
+  `P2FluxClient::paywallVerify()`: the agent signs for at most `$maxPrice` (x402 `upto`), you charge
+  what the request cost (`paywallRedeem(..., $amount)`).
+- Requests signed as bots (Web Bot Auth) count as agents under `agentsOnly` (`guard(..., ['signed' => true])`);
+  an agent's prepaid refund request is answered with its receipt.
   Nothing else changed.
 
 ## 0.7.3 - 2026-09-07

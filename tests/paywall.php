@@ -62,6 +62,22 @@ final class FakeApi
         if ($this->badConfig) {
             return [400, ['error' => 'INVALID_REQUEST', 'action' => 'INVALID_REQUEST']];
         }
+        if (str_ends_with($url, '/challenge') && ($payload['usage'] ?? false) === true) {
+            return [200, ['x402Version' => 2, 'ttl' => 3600, 'accepts' => [['scheme' => 'upto', 'network' => 'eip155:84532', 'amount' => (string) (int) round(((float) $payload['price']) * 1e6), 'payTo' => '0xvault']]]];
+        }
+        if (str_ends_with($url, '/verify')) {
+            $vid = decode($payload['payment'])['id'] ?? '';
+            return [200, str_starts_with($vid, 'bad-') ? ['valid' => false, 'reason' => 'invalid_upto_evm_insufficient_allowance'] : ['valid' => true, 'payer' => '0xagent']];
+        }
+        if (str_ends_with($url, '/redeem') && isset($payload['amount'])) {
+            if ((float) $payload['amount'] > (float) $payload['price']) {
+                return [400, ['error' => 'INVALID_REQUEST', 'action' => 'INVALID_REQUEST']];
+            }
+            if (str_starts_with(decode($payload['payment'])['id'] ?? '', 'late-')) {
+                return [200, ['paid' => false, 'reason' => 'invalid_upto_evm_insufficient_balance']];
+            }
+            return [200, ['paid' => true, 'scheme' => 'upto', 'amount' => (string) (int) round(((float) $payload['amount']) * 1e6), 'transaction' => '0x' . str_repeat('cd', 32), 'payer' => '0xagent', 'payment_response' => b64(['success' => true])]];
+        }
         if (str_ends_with($url, '/challenge')) {
             $units = (string) (int) round(((float) $payload['price']) * 1e6);
             return [200, ['x402Version' => 2, 'ttl' => 3600, 'accepts' => [
@@ -75,6 +91,9 @@ final class FakeApi
         }
         if (str_starts_with($id, 'stale-')) {
             return [200, ['paid' => false, 'reason' => 'batch_stale', 'payment_required' => b64(['x402Version' => 2, 'error' => 'batch_stale', 'accepts' => [['extra' => ['channelState' => ['charged' => '150000']]]]])]];
+        }
+        if (str_starts_with($id, 'refund-')) {
+            return [200, ['paid' => false, 'refunded' => true, 'reason' => 'refunded', 'payment_response' => b64(['success' => true])]];
         }
         if (isset($this->used[$id])) {
             return [200, ['paid' => false, 'reason' => 'invalid_transaction_state']];
@@ -128,6 +147,8 @@ $again = paywall($api)->guard(pay('p1'), 'https://shop.example/other');
 check('the same payment again is refused', $again['allow'] === false && decode($again['headers']['PAYMENT-REQUIRED'])['error'] === 'invalid_transaction_state');
 $bad = paywall($api)->guard(pay('bad-1'), URL);
 check('a refused payment: 402 with the reason', $bad['allow'] === false && decode($bad['headers']['PAYMENT-REQUIRED'])['error'] === 'invalid_exact_evm_insufficient_balance');
+$back = paywall($api)->guard(pay('refund-1'), URL);
+check('a refund of the prepaid balance: its receipt, no content', $back['allow'] === false && $back['status'] === 200 && decode($back['headers']['PAYMENT-RESPONSE'])['success'] === true && $back['body'] === ['refunded' => true]);
 $stale = paywall($api)->guard(pay('stale-1'), URL);
 check('a prepaid refusal forwards P2Flux own 402', $stale['allow'] === false && decode($stale['headers']['PAYMENT-REQUIRED'])['accepts'][0]['extra']['channelState']['charged'] === '150000' && $stale['body']['error'] === 'batch_stale');
 
@@ -186,6 +207,36 @@ check('an AI crawler pays', $p->guard(null, URL, 'Mozilla/5.0 (compatible; GPTBo
 check('no user agent pays', $p->guard(null, URL, null)['allow'] === false);
 check('a browser that sends a payment is an agent', $p->guard(pay('bad-b'), URL, $chrome)['allow'] === false);
 check('node is an agent; a crawler name inside a search engine UA is not', Paywall::isAgent('node', false) && !Paywall::isAgent('Googlebot GPTBot', false));
+
+check('a request signed as a bot is an agent with a browser user agent; a search engine never', Paywall::isAgent($chrome, false, true) && !Paywall::isAgent($chrome, false) && !Paywall::isAgent('Googlebot', false, true));
+
+echo "usage pricing\n";
+$api = new FakeApi();
+$ran = 0;
+$work = static function () use (&$ran): array {
+    $ran++;
+
+    return ['amount' => '0.23', 'value' => 'SECRET-' . $ran];
+};
+$none = paywall($api)->usage(null, URL, '1', $work);
+check('no payment: 402 offering upto for the maximum; the work does not run', $none['allow'] === false && $none['status'] === 402 && decode($none['headers']['PAYMENT-REQUIRED'])['accepts'][0]['scheme'] === 'upto' && decode($none['headers']['PAYMENT-REQUIRED'])['accepts'][0]['amount'] === '1000000' && $ran === 0);
+check('the challenge asked for usage', $api->calls[0] === ['/x402/paywall/challenge', ['recipient' => WALLET, 'price' => '1', 'usage' => true]]);
+$ok = paywall($api)->usage(pay('u-1'), URL, '1', $work);
+check('verified first, then the work, then charged what it cost', $ok['allow'] === true && $ok['value'] === 'SECRET-1' && $ok['amount'] === '230000' && isset($ok['headers']['PAYMENT-RESPONSE']) && array_column(array_slice($api->calls, -2), 0) === ['/x402/paywall/verify', '/x402/paywall/redeem'] && end($api->calls)[1]['amount'] === '0.23');
+$bad = paywall($api)->usage(pay('bad-1'), URL, '1', $work);
+check('a payment that would not settle never starts the work', $bad['allow'] === false && $ran === 1 && decode($bad['headers']['PAYMENT-REQUIRED'])['error'] === 'invalid_upto_evm_insufficient_allowance');
+$late = paywall($api)->usage(pay('late-1'), URL, '1', $work);
+check('a settlement that fails after the work returns nothing', $late['allow'] === false && $ran === 2 && !str_contains((string) json_encode($late), 'SECRET'));
+$threw = false;
+try {
+    paywall($api)->usage(pay('u-2'), URL, '1', static fn (): array => ['amount' => '1.5', 'value' => 'x']);
+} catch (P2FluxException $e) {
+    $threw = true;
+}
+check('charging above the maximum is an exception, not a response', $threw);
+$api->down = true;
+$down = paywall($api)->usage(pay('u-3'), URL, '1', $work);
+check('P2Flux down: 503 and the work does not run', $down['allow'] === false && $down['status'] === 503 && $ran === 2);
 
 echo "\n" . ($failures === 0 ? 'all passed' : "{$failures} failed") . "\n";
 exit($failures === 0 ? 0 : 1);
