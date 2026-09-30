@@ -156,6 +156,37 @@ match ($result->action) {
 error. Only transport-level surprises are exceptional, and an unreachable API says nothing about
 whether the charge landed. See [Subscriptions](docs/subscriptions.md).
 
+## Charge AI agents (x402 paywall)
+
+AI agents pay for a page or an API route in USDC, per request, with the open x402 standard. You say
+who is paid and how much; P2Flux builds what the agent signs and settles what it sends — before you
+serve.
+
+```php
+use P2Flux\Paywall;
+
+$paywall = new Paywall($p2flux, ['recipient' => '0xYourWallet', 'price' => '0.05']);
+$result = $paywall->guard($_SERVER['HTTP_PAYMENT_SIGNATURE'] ?? null, $currentUrl, $_SERVER['HTTP_USER_AGENT'] ?? null);
+
+foreach ($result['headers'] as $name => $value) { header("$name: $value"); }
+if (!$result['allow']) {
+    http_response_code($result['status']);      // 402 with the price, or 503
+    echo json_encode($result['body']);
+    exit;
+}
+// serve the content - once per payment
+```
+
+- One payment serves one response; the same payment sent again is refused.
+- Agents pay per request (P2Flux keeps 1%, at least 0.003 USDC) or from a prepaid balance with no
+  transaction per request (3%). `'prepaid' => false` offers pay-per-request only.
+- `'agentsOnly' => true` charges AI agents and programs only; browsers and search engines pass free.
+- Pass `cacheGet` / `cacheSet` (APCu, Redis, your framework's cache) to fetch the requirement once
+  an hour instead of per request.
+- Laravel: `p2flux/laravel` ships this as the `p2flux.paywall` middleware.
+
+See [`examples/paywall.php`](examples/paywall.php).
+
 ## Framework examples
 
 The SDK is a plain class with no framework ties — bind it once and inject it.

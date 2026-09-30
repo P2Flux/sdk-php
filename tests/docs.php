@@ -16,6 +16,7 @@ require __DIR__ . '/../src/P2FluxException.php';
 require __DIR__ . '/../src/ChargeResult.php';
 require __DIR__ . '/../src/P2FluxClient.php';
 require __DIR__ . '/../src/CurlTransport.php';
+require __DIR__ . '/../src/Paywall.php';
 
 use P2Flux\ChargeResult;
 use P2Flux\P2FluxClient;
@@ -58,7 +59,7 @@ $resultProperties = array_map(
     static fn (ReflectionProperty $p): string => $p->getName(),
     (new ReflectionClass(ChargeResult::class))->getProperties(ReflectionProperty::IS_PUBLIC)
 );
-$classes = ['P2FluxClient', 'P2FluxException', 'ChargeResult', 'CurlTransport'];
+$classes = ['P2FluxClient', 'P2FluxException', 'ChargeResult', 'CurlTransport', 'Paywall'];
 $clientOptions = ['apiUrl', 'timeout', 'transport'];
 
 $tmp = sys_get_temp_dir() . '/p2flux-docs-' . getmypid() . '.php';

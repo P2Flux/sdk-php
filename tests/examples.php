@@ -124,6 +124,8 @@ $expected = [
     'charge-subscription.php' => 'CHARGED',
     'recover-charge.php' => 'FOUND',
     'refund.php' => 'REFUNDED',
+    // Run from the command line there is no payment header: the example answers 402 with the price.
+    'paywall.php' => '"scheme":"exact"',
 ];
 
 check('every example is covered by this test', count($expected) === count(glob($root . '/examples/*.php') ?: []));

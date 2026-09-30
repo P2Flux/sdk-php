@@ -41,6 +41,7 @@ $responses = [
         ]],
     ],
     '/v1/payments' => ['intent' => 'p2f1.k1.stub.mac', 'reference' => '0xref', 'amount' => '12.500000'],
+    '/x402/paywall/challenge' => ['x402Version' => 2, 'ttl' => 3600, 'accepts' => [['scheme' => 'exact', 'network' => 'eip155:84532', 'amount' => '50000', 'payTo' => '0xvault']]],
     '/v1/payments/verify' => [
         'valid' => true,
         'tx_hash' => '0x' . str_repeat('1', 64),

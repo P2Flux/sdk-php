@@ -809,6 +809,42 @@ final class P2FluxClient
     }
 
     /**
+     * x402 paywall: what an AI agent must pay for one request to `$recipient` at `$price` USDC.
+     * Put `accepts`, with the URL, in the `PAYMENT-REQUIRED` header of a 402 - or use
+     * {@see Paywall}, which does all of it. Reusable for `ttl` seconds.
+     *
+     * @return array{x402Version: int, accepts: list<array<string, mixed>>, ttl: int}
+     */
+    public function paywallChallenge(string $recipient, string $price): array
+    {
+        [$httpStatus, $body] = $this->post('/x402/paywall/challenge', ['recipient' => $recipient, 'price' => $price]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * x402 paywall: settle the agent's `PAYMENT-SIGNATURE` header for YOUR wallet and price. Nothing
+     * the agent sent decides what is owed. `paid: true` - serve the content, once: a payment is paid
+     * one time and the same header again answers `invalid_transaction_state`. A refusal is a normal
+     * answer (`paid: false` with `reason`), not an exception.
+     *
+     * @return array{paid: bool, reason?: string, message?: string, transaction?: string, payer?: string, amount?: string, network?: string, payment_response?: string, scheme?: string, receipt?: string, payment_required?: string}
+     */
+    public function paywallRedeem(string $recipient, string $price, string $paymentHeader, string $resource = ''): array
+    {
+        [$httpStatus, $body] = $this->post('/x402/paywall/redeem', [
+            'recipient' => $recipient,
+            'price' => $price,
+            'payment' => $paymentHeader,
+            'resource' => substr($resource, 0, 2048),
+        ]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
      * @param array<string, mixed> $body
      */
     private function throwIfError(int $httpStatus, array $body): void

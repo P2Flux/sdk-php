@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 - unreleased
+
+### Added
+
+- **x402 paywall** — charge AI agents for a page or an API route without an x402 library:
+  `P2Flux\Paywall` (`guard($paymentHeader, $url, $userAgent)`), and the two calls under it,
+  `P2FluxClient::paywallChallenge()` and `paywallRedeem()`. Pay-per-request and prepaid balance; the
+  payment is settled before anything is served and serves one response. `examples/paywall.php`.
+  Nothing else changed.
+
 ## 0.7.3 - 2026-09-07
 
 Documentation, examples and PHPDoc. **No behaviour changed**: every method keeps its name, arguments

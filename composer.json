@@ -11,7 +11,10 @@
     "subscriptions",
     "recurring",
     "checkout",
-    "erc20"
+    "erc20",
+    "x402",
+    "ai-agents",
+    "paywall"
   ],
   "homepage": "https://p2flux.com",
   "support": {
@@ -34,6 +37,7 @@
   "scripts": {
     "test": [
       "@test:transport",
+      "@test:paywall",
       "@test:examples",
       "@test:complete-flow",
       "@test:docs"
@@ -41,7 +45,8 @@
     "test:transport": "php tests/transport.php",
     "test:examples": "php tests/examples.php",
     "test:complete-flow": "php tests/complete-flow.php",
-    "test:docs": "php tests/docs.php"
+    "test:docs": "php tests/docs.php",
+    "test:paywall": "php tests/paywall.php"
   },
   "config": {
     "sort-packages": true
