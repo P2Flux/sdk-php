@@ -32,6 +32,8 @@ final class Paywall
     private const MAX_HEADER = 8192;
     private const USED_TTL = 600;
     private const NO_STORE = ['Cache-Control' => 'no-store, private'];
+    /** @var array<string, int> payments taken (and usage work running) when no cache is given */
+    private static array $seen = [];
 
     private string $recipient;
     private string $price;
@@ -124,7 +126,7 @@ final class Paywall
             return $this->required($price, $url, $mimeType, 'invalid_payload');
         }
         $usedKey = 'p2flux_paywall_used_' . hash('sha256', $paymentHeader);
-        if ($this->cacheGet !== null && ($this->cacheGet)($usedKey) !== null) {
+        if ($this->seen($usedKey)) {
             return $this->required($price, $url, $mimeType, 'invalid_transaction_state');
         }
 
@@ -206,9 +208,25 @@ final class Paywall
             return $this->required($maxPrice, $url, $mimeType, 'invalid_payload', true);
         }
         $usedKey = 'p2flux_paywall_used_' . hash('sha256', $paymentHeader);
-        if ($this->cacheGet !== null && ($this->cacheGet)($usedKey) !== null) {
+        $runningKey = 'p2flux_paywall_running_' . hash('sha256', $paymentHeader);
+        if ($this->seen($usedKey) || $this->seen($runningKey)) {
             return $this->required($maxPrice, $url, $mimeType, 'invalid_transaction_state', true);
         }
+        // One payment runs the work once: marked before verify, cleared when this request is done.
+        $this->remember($runningKey, 120);
+        try {
+            return $this->usageOnce($paymentHeader, $url, $maxPrice, $work, $mimeType, $usedKey);
+        } finally {
+            $this->forget($runningKey);
+        }
+    }
+
+    /**
+     * @param callable(): array{amount: string, value: mixed} $work
+     * @return array<string, mixed>
+     */
+    private function usageOnce(string $paymentHeader, string $url, string $maxPrice, callable $work, string $mimeType, string $usedKey): array
+    {
         try {
             $verdict = $this->client->paywallVerify($this->recipient, $maxPrice, $paymentHeader);
         } catch (P2FluxException $e) {
@@ -249,11 +267,34 @@ final class Paywall
         return $out;
     }
 
-    private function remember(string $key): void
+    private function remember(string $key, int $ttl = self::USED_TTL): void
     {
         if ($this->cacheSet !== null) {
-            ($this->cacheSet)($key, 1, self::USED_TTL);
+            ($this->cacheSet)($key, 1, $ttl);
+            return;
         }
+        // Without a cache: this process at least (long-running servers keep it between requests).
+        if (count(self::$seen) >= 10_000) {
+            array_shift(self::$seen);
+        }
+        self::$seen[$key] = time() + $ttl;
+    }
+
+    private function seen(string $key): bool
+    {
+        if ($this->cacheGet !== null) {
+            return ($this->cacheGet)($key) !== null;
+        }
+        return (self::$seen[$key] ?? 0) > time();
+    }
+
+    private function forget(string $key): void
+    {
+        if ($this->cacheSet !== null) {
+            ($this->cacheSet)($key, null, 1);
+            return;
+        }
+        unset(self::$seen[$key]);
     }
 
     /** @return array<string, mixed> */

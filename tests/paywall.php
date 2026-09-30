@@ -238,5 +238,12 @@ $api->down = true;
 $down = paywall($api)->usage(pay('u-3'), URL, '1', $work);
 check('P2Flux down: 503 and the work does not run', $down['allow'] === false && $down['status'] === 503 && $ran === 2);
 
+echo "no cache\n";
+$api = new FakeApi();
+$bare = new Paywall(new P2FluxClient(['apiUrl' => 'https://api-test.p2flux.com/', 'transport' => $api]), ['recipient' => WALLET, 'price' => '0.05']);
+check('without a cache the first use is paid', $bare->guard(pay('bare-1'), URL)['allow'] === true);
+$callsBefore = count($api->calls);
+check('without a cache the same payment again is still refused here, without asking P2Flux', $bare->guard(pay('bare-1'), URL)['allow'] === false && count(array_filter(array_slice($api->calls, $callsBefore), static fn ($c) => $c[0] === '/x402/paywall/redeem')) === 0);
+
 echo "\n" . ($failures === 0 ? 'all passed' : "{$failures} failed") . "\n";
 exit($failures === 0 ? 0 : 1);
