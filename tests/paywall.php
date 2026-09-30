@@ -63,7 +63,7 @@ final class FakeApi
             return [400, ['error' => 'INVALID_REQUEST', 'action' => 'INVALID_REQUEST']];
         }
         if (str_ends_with($url, '/challenge') && ($payload['usage'] ?? false) === true) {
-            return [200, ['x402Version' => 2, 'ttl' => 3600, 'accepts' => [['scheme' => 'upto', 'network' => 'eip155:84532', 'amount' => (string) (int) round(((float) $payload['price']) * 1e6), 'payTo' => '0xvault']]]];
+            return [200, ['x402Version' => 2, 'ttl' => 3600, 'extensions' => ['eip2612GasSponsoring' => ['info' => ['version' => '1']]], 'accepts' => [['scheme' => 'upto', 'network' => 'eip155:84532', 'amount' => (string) (int) round(((float) $payload['price']) * 1e6), 'payTo' => '0xvault']]]];
         }
         if (str_ends_with($url, '/verify')) {
             $vid = decode($payload['payment'])['id'] ?? '';
@@ -219,7 +219,7 @@ $work = static function () use (&$ran): array {
     return ['amount' => '0.23', 'value' => 'SECRET-' . $ran];
 };
 $none = paywall($api)->usage(null, URL, '1', $work);
-check('no payment: 402 offering upto for the maximum; the work does not run', $none['allow'] === false && $none['status'] === 402 && decode($none['headers']['PAYMENT-REQUIRED'])['accepts'][0]['scheme'] === 'upto' && decode($none['headers']['PAYMENT-REQUIRED'])['accepts'][0]['amount'] === '1000000' && $ran === 0);
+check('no payment: 402 offering upto for the maximum; the work does not run', $none['allow'] === false && $none['status'] === 402 && decode($none['headers']['PAYMENT-REQUIRED'])['accepts'][0]['scheme'] === 'upto' && decode($none['headers']['PAYMENT-REQUIRED'])['accepts'][0]['amount'] === '1000000' && decode($none['headers']['PAYMENT-REQUIRED'])['extensions']['eip2612GasSponsoring']['info']['version'] === '1' && $ran === 0);
 check('the challenge asked for usage', $api->calls[0] === ['/x402/paywall/challenge', ['recipient' => WALLET, 'price' => '1', 'usage' => true]]);
 $ok = paywall($api)->usage(pay('u-1'), URL, '1', $work);
 check('verified first, then the work, then charged what it cost', $ok['allow'] === true && $ok['value'] === 'SECRET-1' && $ok['amount'] === '230000' && isset($ok['headers']['PAYMENT-RESPONSE']) && array_column(array_slice($api->calls, -2), 0) === ['/x402/paywall/verify', '/x402/paywall/redeem'] && end($api->calls)[1]['amount'] === '0.23');

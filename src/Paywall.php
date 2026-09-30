@@ -260,7 +260,10 @@ final class Paywall
     private function required(string $price, string $url, string $mimeType, ?string $error, bool $usage = false): array
     {
         $cacheKey = 'p2flux_paywall_ch_' . md5(strtolower($this->recipient) . '|' . $price . ($usage ? '|upto' : ''));
-        $accepts = $this->cacheGet !== null ? ($this->cacheGet)($cacheKey) : null;
+        $cached = $this->cacheGet !== null ? ($this->cacheGet)($cacheKey) : null;
+        $accepts = is_array($cached) && is_array($cached['accepts'] ?? null) ? $cached['accepts'] : null;
+        // Usage pricing: what lets an agent without ETH pay. Passed on as P2Flux wrote it.
+        $extensions = is_array($cached) ? ($cached['extensions'] ?? null) : null;
         if (!is_array($accepts) || $accepts === []) {
             try {
                 $challenge = $this->client->paywallChallenge($this->recipient, $price, $usage);
@@ -275,8 +278,9 @@ final class Paywall
             if ($accepts === []) {
                 return $this->unavailable();
             }
+            $extensions = is_array($challenge['extensions'] ?? null) ? $challenge['extensions'] : null;
             if ($this->cacheSet !== null) {
-                ($this->cacheSet)($cacheKey, $accepts, min(3600, max(60, (int) ($challenge['ttl'] ?? 600))));
+                ($this->cacheSet)($cacheKey, ['accepts' => $accepts, 'extensions' => $extensions], min(3600, max(60, (int) ($challenge['ttl'] ?? 600))));
             }
         }
         if (!$this->prepaid) {
@@ -288,6 +292,9 @@ final class Paywall
         }
         $body['resource'] = ['url' => $url, 'mimeType' => $mimeType];
         $body['accepts'] = $accepts;
+        if ($extensions !== null) {
+            $body['extensions'] = $extensions;
+        }
 
         return [
             'allow' => false,
