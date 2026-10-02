@@ -21,6 +21,7 @@ This page is the index.
 | [Subscriptions](subscriptions.md) | Setup, the checkout handoff, charging, charge outcomes, allowance repair, cancellation |
 | [Refunds](refunds.md) | Merchant-sent transfers, verified by P2Flux |
 | [Recovery](recovery.md) | A lost payment, a lost charge, and the ambiguous request |
+| [Charge AI agents](paywall.md) | `P2Flux\Paywall`: x402 paywall, options, cache, prepaid, the calls underneath, test to live |
 
 ## Building it
 
@@ -46,6 +47,7 @@ This page is the index.
 | [`charge-subscription.php`](../examples/charge-subscription.php) | One period, every outcome |
 | [`recover-charge.php`](../examples/recover-charge.php) | The settlement behind an `ALREADY_CHARGED` |
 | [`refund.php`](../examples/refund.php) | Prepare, send from your wallet, verify |
+| [`paywall.php`](../examples/paywall.php) | Charge AI agents for a page |
 | [`complete-payment-flow/`](../examples/complete-payment-flow/) | A runnable merchant integration |
 
 The JavaScript SDK (`@p2flux/sdk`) covers the identical public protocol surface. The full protocol

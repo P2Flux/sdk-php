@@ -23,6 +23,7 @@ retry loops — you already have those.
 - **Buyers with no ETH.** Optionally, the buyer pays the network fee in USDC instead of holding the
   chain's native currency.
 - **Refunds.** A plain transfer from your wallet, verified by P2Flux, which never holds the money.
+- **AI agents.** `P2Flux\Paywall` charges AI agents per request over x402. Live on Base mainnet.
 
 ## Install
 
@@ -200,7 +201,8 @@ if (!$result['allow']) { /* send $result['status'], $result['headers'], json $re
 The work runs only after P2Flux confirmed the payment will settle; if the settlement then fails, the
 value is not returned.
 
-See [`examples/paywall.php`](examples/paywall.php).
+See [`examples/paywall.php`](examples/paywall.php). Every option, the cache, the result shape and the
+test-to-live checklist: [Charge AI agents](docs/paywall.md).
 
 ## Framework examples
 
@@ -209,7 +211,9 @@ The SDK is a plain class with no framework ties — bind it once and inject it.
 - [Laravel](docs/frameworks/laravel.md) — container binding, injected controller, scheduler command
 - [Symfony](docs/frameworks/symfony.md) — service definition, autowired controller, console command
 
-There is no Laravel package and no Symfony bundle, and neither is needed.
+There is no Symfony bundle, and none is needed. For Laravel, the optional
+[`p2flux/laravel`](https://github.com/P2Flux/laravel) package adds the binding, config and the
+`p2flux.paywall` middleware.
 
 ## Documentation
 
