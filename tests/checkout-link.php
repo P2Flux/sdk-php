@@ -55,9 +55,16 @@ check('the token cannot leave the fragment', $link === 'https://pay.example.com/
 $local = new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'checkoutUrl' => 'http://localhost:5173']);
 check('http allowed for localhost only', $local->checkoutLink('pay', 't') === 'http://localhost:5173/#/pay/t');
 
-check('http refused elsewhere', refuses(static fn () => new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'checkoutUrl' => 'http://pay.example.com'])));
-check('a query refused', refuses(static fn () => new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'checkoutUrl' => 'https://pay.example.com/?x=1'])));
-check('not a URL refused', refuses(static fn () => new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'checkoutUrl' => 'not a url'])));
+// A wrong optional setting fails the link, never the client: payments keep working.
+foreach (['http://pay.example.com', 'https://pay.example.com/?x=1', 'https://user:pw@pay.example.com', 'not a url', 'ftp://localhost', 'http://localhost.evil.com'] as $bad) {
+    $client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'checkoutUrl' => $bad]);
+    check("constructs with checkoutUrl {$bad}", $client instanceof P2FluxClient);
+    check("refuses the link for {$bad}", refuses(static fn () => $client->checkoutLink('pay', 't')));
+}
+$empty = new P2FluxClient(['apiUrl' => 'https://api.p2flux.com', 'checkoutUrl' => '']);
+check('an empty setting means not set', $empty->checkoutLink('pay', 't') === 'https://pay.p2flux.com/#/pay/t');
+$upper = new P2FluxClient(['apiUrl' => 'https://API.P2FLUX.COM']);
+check('the API host is case-insensitive', $upper->checkoutLink('pay', 't') === 'https://pay.p2flux.com/#/pay/t');
 $unknown = new P2FluxClient(['apiUrl' => 'http://localhost:3000']);
 check('an own API needs an explicit checkoutUrl', refuses(static fn () => $unknown->checkoutLink('pay', 't'), '/checkoutUrl is required/'));
 check('an empty token refused', refuses(static fn () => $live->checkoutLink('pay', '')));

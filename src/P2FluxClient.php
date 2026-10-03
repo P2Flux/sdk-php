@@ -125,7 +125,7 @@ final class P2FluxClient
 
     private string $apiUrl;
     private int $timeout;
-    /** Where buyers open the checkout; null when neither given nor known for this API. */
+    /** The configured checkout address, as given; validated only by checkoutLink(). */
     private ?string $checkoutUrl;
 
     /** P2Flux's hosted checkout, per API host. */
@@ -171,7 +171,10 @@ final class P2FluxClient
         $this->apiUrl = rtrim($options['apiUrl'], '/');
         $this->timeout = $options['timeout'] ?? 60;
         $this->transport = $options['transport'] ?? null;
-        $this->checkoutUrl = self::checkoutBase($this->apiUrl, $options['checkoutUrl'] ?? null);
+        /* Kept as given and checked only when a link is built: an optional setting with a typo must not
+         * stop this client from creating, verifying or charging payments. Empty means not set. */
+        $checkoutUrl = $options['checkoutUrl'] ?? null;
+        $this->checkoutUrl = is_string($checkoutUrl) && trim($checkoutUrl) !== '' ? trim($checkoutUrl) : null;
     }
 
     /**
@@ -190,10 +193,11 @@ final class P2FluxClient
         if ($token === '') {
             throw new \InvalidArgumentException('checkoutLink needs a token');
         }
-        if ($this->checkoutUrl === null) {
+        $base = self::checkoutBase($this->apiUrl, $this->checkoutUrl);
+        if ($base === null) {
             throw new \InvalidArgumentException('checkoutUrl is required for this apiUrl');
         }
-        return $this->checkoutUrl . '/#/' . $page . '/' . rawurlencode($token);
+        return $base . '/#/' . $page . '/' . rawurlencode($token);
     }
 
     private static function checkoutBase(string $apiUrl, ?string $checkoutUrl): ?string
@@ -206,12 +210,12 @@ final class P2FluxClient
         if (!is_array($parts) || !isset($parts['scheme'], $parts['host'])) {
             throw new \InvalidArgumentException("checkoutUrl is not a URL: $checkoutUrl");
         }
-        $local = in_array($parts['host'], ['localhost', '127.0.0.1'], true);
+        $local = in_array(strtolower($parts['host']), ['localhost', '127.0.0.1'], true);
         if (strtolower($parts['scheme']) !== 'https' && !($local && strtolower($parts['scheme']) === 'http')) {
             throw new \InvalidArgumentException('checkoutUrl must be https (http only for localhost)');
         }
-        if (isset($parts['query']) || isset($parts['fragment'])) {
-            throw new \InvalidArgumentException('checkoutUrl must not carry a query or a fragment');
+        if (isset($parts['query']) || isset($parts['fragment']) || isset($parts['user']) || isset($parts['pass'])) {
+            throw new \InvalidArgumentException('checkoutUrl must not carry credentials, a query or a fragment');
         }
         $port = isset($parts['port']) ? ':' . $parts['port'] : '';
         return rtrim(strtolower($parts['scheme']) . '://' . $parts['host'] . $port . ($parts['path'] ?? ''), '/');
