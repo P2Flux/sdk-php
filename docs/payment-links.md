@@ -37,8 +37,8 @@ $status['subscribers']; // who subscribed, their state, the last period paid, th
   P2Flux retries after 1 hour, 6 hours and then daily, only in the first quarter of the period (at most
   3 days), and then skips that period - the contract has no catch-up. Three periods in a row that the
   buyer could not pay end the subscription; a period missed because of trouble on P2Flux's side is
-  skipped too but never counts against the buyer. Six periods in a row not collected, for any reason,
-  also end it.
+  skipped too but never counts against the buyer. A subscription not collected for four periods and 90 days in a
+  row, for any reason, is suspended (not ended): a successful `collectPaymentLink` restarts it.
 
 `collectPaymentLink($manage, $subscriptionId)` collects the current period now; `stopPaymentLink()`
 stops automatic collection for one subscriber (a successful collect restarts it; a subscriber stopped for three
