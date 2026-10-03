@@ -7,7 +7,7 @@ server of your own. Nothing is stored to create one: the link is signed terms, l
 |---|---|---|
 | `once` | An invoice. It can be paid once: every open mints the same reference, and the contract refuses a second payment with it. | up to 30 days (default 7) |
 | `reusable` | A fixed price, payable any number of times. | up to a year |
-| `subscription` | A plan: the buyer signs once and pays the first period at once; P2Flux collects every later period. Period at least one day. | up to a year (for new signups) |
+| `subscription` | A plan: the buyer signs once and pays the first period at once; P2Flux collects every later period. At least 1 USDC a period, period at least one day. | up to a year (for new signups) |
 
 ```php
 $plan = $p2flux->createPaymentLink([
@@ -37,7 +37,8 @@ $status['subscribers']; // who subscribed, their state, the last period paid, th
   P2Flux retries after 1 hour, 6 hours and then daily, only in the first quarter of the period (at most
   3 days), and then skips that period - the contract has no catch-up. Three periods in a row that the
   buyer could not pay end the subscription; a period missed because of trouble on P2Flux's side is
-  skipped too but never counts against the buyer.
+  skipped too but never counts against the buyer. Six periods in a row not collected, for any reason,
+  also end it.
 
 `collectPaymentLink($manage, $subscriptionId)` collects the current period now; `stopPaymentLink()`
 stops automatic collection for one subscriber (a successful collect restarts it; a subscriber stopped for three
@@ -49,7 +50,7 @@ subscription".
 
 The buyer's checkout opens the link (a setup token), the buyer signs, and the checkout joins the link
 with the signed capability (`/v1/links/subscribe`, `subscribePaymentLink` in the SDKs): the first
-period is charged at once, and only when that charge has landed is the subscription kept. A signup
+period is charged at once, and only when that charge has landed (or is confirming) is the subscription kept. A signup
 that does not pay keeps nothing.
 
 ## The description

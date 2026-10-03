@@ -32,7 +32,7 @@ This page is the index.
 | [Testing](testing.md) | Fake transport, canned responses per code, PHPUnit shape, the canned API |
 | [Errors and retries](errors.md) | Every public code, grouped by action, with a recipe per situation |
 | [Production checklist](production-checklist.md) | What to confirm before real money |
-| [Call and result contract](protocol-contract.md) | All 18 operations in one table, plus the transport contract |
+| [Call and result contract](protocol-contract.md) | All 27 operations in one table, plus the transport contract |
 
 ## Examples
 
