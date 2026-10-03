@@ -38,6 +38,7 @@ checked-in parity test in both repositories.
 | `prepareRefund(...)` / `resolveRefund(...)` / `verifyRefund(...)` | Merchant-sent refunds, verified by P2Flux. |
 | `createPaymentLink($terms)` | `kind`, `recipient`, `amount`, optional `label`, `expires_at`, `gas_payment_mode`, `period`, `periods` → a public `link` and a private `manage` token. Nothing is stored. |
 | `openPaymentLink($link, $payer = null)` | For a checkout of your own: the intent or setup token a link opens into. |
+| `subscribePaymentLink($link, $subscriptionRef)` | For a checkout of your own: join a subscription link with the capability the buyer just signed. Charges the first period; kept only when that charge landed. A `ChargeResult`, never throws. |
 | `paymentLinkStatus(['link' => ...] or ['manage' => ...])` | Invoice paid or not; with `manage`, every payment read from chain or every subscriber. |
 | `collectPaymentLink($manage, $subscriptionId)` / `stopPaymentLink($manage, $subscriptionId)` | "Collect now" (a `ChargeResult`, never throws) and "stop collecting" (reversible) for one subscriber. |
 

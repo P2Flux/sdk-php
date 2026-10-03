@@ -7,7 +7,7 @@ server of your own. Nothing is stored to create one: the link is signed terms, l
 |---|---|---|
 | `once` | An invoice. It can be paid once: every open mints the same reference, and the contract refuses a second payment with it. | up to 30 days (default 7) |
 | `reusable` | A fixed price, payable any number of times. | up to a year |
-| `subscription` | A plan: the buyer signs once, P2Flux collects every period. Period at least one day. | up to a year (for new signups) |
+| `subscription` | A plan: the buyer signs once and pays the first period at once; P2Flux collects every later period. Period at least one day. | up to a year (for new signups) |
 
 ```php
 $plan = $p2flux->createPaymentLink([
@@ -40,16 +40,24 @@ $status['subscribers']; // who subscribed, their state, the last period paid, th
   skipped too but never counts against the buyer.
 
 `collectPaymentLink($manage, $subscriptionId)` collects the current period now; `stopPaymentLink()`
-stops automatic collection for one subscriber (a successful collect restarts it). Only the buyer's wallet
+stops automatic collection for one subscriber (a successful collect restarts it; a subscriber stopped for three
+periods ends). An ended subscription is never collected again. Only the buyer's wallet
 can revoke the permission on chain - they do it by opening the link again and choosing "Manage your
 subscription".
 
+## Signing up is paying
+
+The buyer's checkout opens the link (a setup token), the buyer signs, and the checkout joins the link
+with the signed capability (`/v1/links/subscribe`, `subscribePaymentLink` in the SDKs): the first
+period is charged at once, and only when that charge has landed is the subscription kept. A signup
+that does not pay keeps nothing.
+
 ## The description
 
-The `label` is shown to the buyer as "Note from the recipient, not verified by P2Flux": up to 60
-characters - letters, digits, currency signs, spaces and `. , : ; ' ( ) # & + _ ! ? % - /`; nothing
+The `label` is shown to the buyer as "Note from the link's creator, not verified by P2Flux": up to 60
+characters - letters, ASCII digits, currency signs, spaces and `. , : ; ' ( ) # & + _ ! ? % - /`; nothing
 that reads as a web or e-mail address (so no letter right after a full stop) and no invisible or
-look-alike characters.
+look-alike characters, and no mention of P2Flux.
 
 ## Errors
 

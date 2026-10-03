@@ -737,6 +737,23 @@ final class P2FluxClient
     }
 
     /**
+     * For a checkout of your own: join a subscription link with the capability the buyer just signed
+     * (finalizeSubscription). P2Flux charges the first period at once and keeps the subscription only
+     * when that charge landed or is on its way. Same answers as charge(); never throws. The raw answer
+     * also says who collects the renewals (`collected_by`).
+     */
+    public function subscribePaymentLink(string $link, string $subscriptionRef): ChargeResult
+    {
+        try {
+            [, $body] = $this->post('/v1/links/subscribe', ['link' => $link, 'subscription' => $subscriptionRef]);
+        } catch (P2FluxException $e) {
+            return ChargeResult::fromArray(['status' => 'NETWORK_ERROR'] + $e->raw);
+        }
+
+        return ChargeResult::fromArray($body);
+    }
+
+    /**
      * What a link has collected. Pass `['link' => ...]` for the public view (invoice paid or not) or
      * `['manage' => ...]` for yours: who paid, every payment read from chain (`complete: false` means
      * ask again for more), every subscriber of a subscription link.

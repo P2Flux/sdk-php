@@ -352,6 +352,7 @@ $REQUIRED_OPERATIONS = [
     // Payment links.
     '/v1/links',
     '/v1/links/open',
+    '/v1/links/subscribe',
     '/v1/links/status',
     '/v1/links/collect',
     '/v1/links/stop',
@@ -383,6 +384,7 @@ $client->sponsorPayment('p2f1.x', 'p2gas1.x', '0x' . str_repeat('55', 20), '0x00
 $client->submitAllowanceRestore('p2approve1.x', 'p2gas1.x', '0x00', '0x00');
 $client->createPaymentLink(['kind' => 'once', 'recipient' => '0x' . str_repeat('33', 20), 'amount' => '1.00']);
 $client->openPaymentLink('p2l1.x');
+$client->subscribePaymentLink('p2l1.x', 'p2s2.x');
 $client->paymentLinkStatus(['manage' => 'p2lm1.x']);
 $client->collectPaymentLink('p2lm1.x', $hash);
 $client->stopPaymentLink('p2lm1.x', $hash);

@@ -249,7 +249,7 @@ There is no Symfony bundle, and none is needed. For Laravel, the optional
 | [Testing](docs/testing.md) | Fake transport, canned responses, no crypto spent |
 | [Production checklist](docs/production-checklist.md) | Before real money |
 | [Payment links](docs/payment-links.md) | Invoices, fixed prices and subscriptions sent as a URL |
-| [Call and result contract](docs/protocol-contract.md) | All 26 operations in one table |
+| [Call and result contract](docs/protocol-contract.md) | All 27 operations in one table |
 | [Examples](examples/) | Runnable, one operation per file |
 
 Full protocol docs: [p2flux.com/docs](https://p2flux.com/docs/) ·
