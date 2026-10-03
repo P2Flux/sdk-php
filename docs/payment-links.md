@@ -35,19 +35,21 @@ $status['subscribers']; // who subscribed, their state, the last period paid, th
   `complete` is `false`, ask again for the rest.
 - `subscription`: `subscribers`. Each due period is collected automatically; when the buyer cannot pay,
   P2Flux retries after 1 hour, 6 hours and then daily, only in the first quarter of the period (at most
-  3 days), and then skips that period - the contract has no catch-up. Three skipped periods in a row
-  end the subscription.
+  3 days), and then skips that period - the contract has no catch-up. Three periods in a row that the
+  buyer could not pay end the subscription; a period missed because of trouble on P2Flux's side is
+  skipped too but never counts against the buyer.
 
 `collectPaymentLink($manage, $subscriptionId)` collects the current period now; `stopPaymentLink()`
-stops automatic collection for one subscriber (collecting again resumes it). Only the buyer's wallet
+stops automatic collection for one subscriber (a successful collect restarts it). Only the buyer's wallet
 can revoke the permission on chain - they do it by opening the link again and choosing "Manage your
 subscription".
 
 ## The description
 
 The `label` is shown to the buyer as "Note from the recipient, not verified by P2Flux": up to 60
-characters - letters, digits, currency signs, spaces and `. , : ; ' ( ) # & + _ ! ? % - /`, no web or
-e-mail addresses.
+characters - letters, digits, currency signs, spaces and `. , : ; ' ( ) # & + _ ! ? % - /`; nothing
+that reads as a web or e-mail address (so no letter right after a full stop) and no invisible or
+look-alike characters.
 
 ## Errors
 
