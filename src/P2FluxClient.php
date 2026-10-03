@@ -711,7 +711,7 @@ final class P2FluxClient
      * the number of charges). Optional `label` (up to 60 characters, no web addresses), `expires_at`
      * (unix seconds) and, for one-time kinds, `gas_payment_mode`.
      *
-     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int} $terms
+     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int} $terms
      * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, ...}
      */
     public function createPaymentLink(array $terms): array
