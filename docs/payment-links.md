@@ -31,7 +31,8 @@ $status['subscribers']; // who subscribed, their state, the last period paid, th
 ```
 
 - `once`: `paid` and the `payment` (with the payer when you ask with `manage`).
-- `reusable`: every `payments` entry read from the chain. Reading is incremental and remembered; when
+- `reusable`: every `payments` entry read from the chain, listed once its block is safe from
+  reorganisation (usually within a minute on Base). Reading is incremental and remembered; when
   `complete` is `false`, ask again for the rest.
 - `subscription`: `subscribers`. Each due period is collected automatically; when the buyer cannot pay,
   P2Flux retries after 1 hour, 6 hours and then daily, only in the first quarter of the period (at most
