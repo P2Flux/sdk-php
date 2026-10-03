@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0 - 2026-10-03
+
+### Added
+
+- **`checkoutLink($page, $token)`** — the address that opens a checkout page (`pay`, `subscribe`,
+  `cancel`, `refund`, `approve`) for a token the API issued, with the token in the fragment.
+- **`checkoutUrl` option** — where buyers open the checkout. Defaults to P2Flux's hosted checkout for
+  the API in use; set it when you host the checkout yourself
+  (https://p2flux.com/docs/self-hosted-checkout.html). Must be https (http only for localhost).
+
+Nothing else changed.
+
 ## 0.8.0 - 2026-10-01
 
 ### Added

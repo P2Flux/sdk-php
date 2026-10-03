@@ -125,6 +125,16 @@ final class P2FluxClient
 
     private string $apiUrl;
     private int $timeout;
+    /** Where buyers open the checkout; null when neither given nor known for this API. */
+    private ?string $checkoutUrl;
+
+    /** P2Flux's hosted checkout, per API host. */
+    private const HOSTED_CHECKOUT = [
+        'api.p2flux.com' => 'https://pay.p2flux.com',
+        'api-test.p2flux.com' => 'https://pay-test.p2flux.com',
+    ];
+
+    private const CHECKOUT_PAGES = ['pay', 'subscribe', 'cancel', 'refund', 'approve'];
     /** @var null|callable(string, array<string, mixed>, int): array{0: int, 1: array<string, mixed>} */
     private $transport;
 
@@ -134,7 +144,7 @@ final class P2FluxClient
     private static ?CurlTransport $defaultTransport = null;
 
     /**
-     * @param array{apiUrl: string, timeout?: int, transport?: callable} $options
+     * @param array{apiUrl: string, timeout?: int, transport?: callable, checkoutUrl?: string} $options
      *        timeout defaults to 60 s: a charge waits for on-chain confirmation, which on a busy
      *        public RPC can take tens of seconds. Abandoning it early is safe but noisy - the
      *        payment may still land, and the next call returns ALREADY_CHARGED.
@@ -144,6 +154,11 @@ final class P2FluxClient
      *        absolute URL, the payload array and the timeout, and must return
      *        [int $httpStatus, array $decodedBody]. Throw P2FluxException('NETWORK_ERROR', ...)
      *        when the request never reached the API; charge() turns that into a retryable result.
+     *
+     *        checkoutUrl is where buyers open the checkout, for checkoutLink(). Defaults to P2Flux's
+     *        hosted checkout for the API you use (api.p2flux.com -> https://pay.p2flux.com,
+     *        api-test.p2flux.com -> https://pay-test.p2flux.com). Set it when you host the checkout
+     *        yourself, e.g. https://pay.yourcompany.com or https://yourcompany.com/pay.
      */
     public function __construct(array $options)
     {
@@ -156,6 +171,50 @@ final class P2FluxClient
         $this->apiUrl = rtrim($options['apiUrl'], '/');
         $this->timeout = $options['timeout'] ?? 60;
         $this->transport = $options['transport'] ?? null;
+        $this->checkoutUrl = self::checkoutBase($this->apiUrl, $options['checkoutUrl'] ?? null);
+    }
+
+    /**
+     * The address that opens a checkout page for a token the API issued: 'pay' for a payment
+     * intent, 'subscribe' for a setup token, 'cancel', 'refund' and 'approve' for theirs. The token
+     * goes in the fragment, which browsers never send to a server or put in a Referer header.
+     *
+     * @throws \InvalidArgumentException for an unknown page, an empty token, or when no checkout
+     *         address is known (an API address of your own needs an explicit checkoutUrl)
+     */
+    public function checkoutLink(string $page, string $token): string
+    {
+        if (!in_array($page, self::CHECKOUT_PAGES, true)) {
+            throw new \InvalidArgumentException("unknown checkout page: $page");
+        }
+        if ($token === '') {
+            throw new \InvalidArgumentException('checkoutLink needs a token');
+        }
+        if ($this->checkoutUrl === null) {
+            throw new \InvalidArgumentException('checkoutUrl is required for this apiUrl');
+        }
+        return $this->checkoutUrl . '/#/' . $page . '/' . rawurlencode($token);
+    }
+
+    private static function checkoutBase(string $apiUrl, ?string $checkoutUrl): ?string
+    {
+        if ($checkoutUrl === null) {
+            $host = parse_url($apiUrl, PHP_URL_HOST);
+            return is_string($host) ? (self::HOSTED_CHECKOUT[strtolower($host)] ?? null) : null;
+        }
+        $parts = parse_url($checkoutUrl);
+        if (!is_array($parts) || !isset($parts['scheme'], $parts['host'])) {
+            throw new \InvalidArgumentException("checkoutUrl is not a URL: $checkoutUrl");
+        }
+        $local = in_array($parts['host'], ['localhost', '127.0.0.1'], true);
+        if (strtolower($parts['scheme']) !== 'https' && !($local && strtolower($parts['scheme']) === 'http')) {
+            throw new \InvalidArgumentException('checkoutUrl must be https (http only for localhost)');
+        }
+        if (isset($parts['query']) || isset($parts['fragment'])) {
+            throw new \InvalidArgumentException('checkoutUrl must not carry a query or a fragment');
+        }
+        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+        return rtrim(strtolower($parts['scheme']) . '://' . $parts['host'] . $port . ($parts['path'] ?? ''), '/');
     }
 
     /**

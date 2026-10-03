@@ -60,7 +60,7 @@ $resultProperties = array_map(
     (new ReflectionClass(ChargeResult::class))->getProperties(ReflectionProperty::IS_PUBLIC)
 );
 $classes = ['P2FluxClient', 'P2FluxException', 'ChargeResult', 'CurlTransport', 'Paywall'];
-$clientOptions = ['apiUrl', 'timeout', 'transport'];
+$clientOptions = ['apiUrl', 'timeout', 'transport', 'checkoutUrl'];
 
 $tmp = sys_get_temp_dir() . '/p2flux-docs-' . getmypid() . '.php';
 register_shutdown_function(static function () use ($tmp): void {

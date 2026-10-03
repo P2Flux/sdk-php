@@ -35,7 +35,7 @@ P2Flux's vocabulary, once, so the rest of the documentation reads plainly.
 |---|---|
 | **intent** | A signed one-time payment: recipient, amount, reference, all fixed. `createPayment()` mints it, `verifyPayment()` checks a transaction against it. Yours to store. |
 | **reference** | The on-chain identifier inside an intent. P2Flux generates it; keep your own order id beside it. |
-| **hosted checkout** | The page at `pay.p2flux.com` where the buyer's wallet does the work. Not part of this SDK. |
+| **hosted checkout** | The page at `pay.p2flux.com` where the buyer's wallet does the work. Not part of this SDK; `checkoutLink()` builds the address that opens it. Large merchants can [host it themselves](https://p2flux.com/docs/self-hosted-checkout.html). |
 | **settlement receipt** | A short-lived sealed token proving a verification already happened. Passing it back makes a repeat verify instant. |
 | **setup token** | A signed set of subscription terms, valid for fifteen minutes, that the checkout turns into a capability. |
 | **salt** | Identifies one exact setup. Compare it in `status()` to prove a capability came from the setup you created. |
@@ -74,7 +74,17 @@ $p2flux = new P2FluxClient([
     'apiUrl'  => 'https://api-test.p2flux.com',   // required
     'timeout' => 30,                              // optional, seconds; default 60
     'transport' => $callable,                     // optional, see below
+    'checkoutUrl' => 'https://pay.example.com',  // optional, see below
 ]);
+```
+
+`checkoutUrl` is where buyers open the checkout. It defaults to the hosted checkout of the API you use
+(`https://pay.p2flux.com` or `https://pay-test.p2flux.com`); set it when you
+[host the checkout yourself](https://p2flux.com/docs/self-hosted-checkout.html). `checkoutLink()` builds
+the address that opens a page for a token:
+
+```php
+$link = $p2flux->checkoutLink('pay', $intent['intent']); // https://pay.p2flux.com/#/pay/…
 ```
 
 `timeout` defaults to 60 seconds because a charge waits for on-chain confirmation, which can take

@@ -37,12 +37,14 @@
   "scripts": {
     "test": [
       "@test:transport",
+      "@test:checkout-link",
       "@test:paywall",
       "@test:examples",
       "@test:complete-flow",
       "@test:docs"
     ],
     "test:transport": "php tests/transport.php",
+    "test:checkout-link": "php tests/checkout-link.php",
     "test:examples": "php tests/examples.php",
     "test:complete-flow": "php tests/complete-flow.php",
     "test:docs": "php tests/docs.php",
