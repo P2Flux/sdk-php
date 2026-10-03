@@ -1,6 +1,6 @@
 # P2Flux PHP SDK — documentation
 
-`p2flux/sdk-php` v0.9.0. A thin client over the P2Flux HTTP API: it normalizes result codes and
+`p2flux/sdk-php` v0.10.0. A thin client over the P2Flux HTTP API: it normalizes result codes and
 nothing else. No scheduler, no storage, no retry loops — your application owns all three.
 
 This page is the index.

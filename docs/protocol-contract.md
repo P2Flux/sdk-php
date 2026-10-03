@@ -36,6 +36,10 @@ checked-in parity test in both repositories.
 | `prepareAllowanceRevocation()` | Calldata for the global allowance stop. |
 | `createAllowanceRestoreSession(string $subscription)` / `resolveAllowanceRestore(string $token)` | `INSUFFICIENT_ALLOWANCE` is not a dead subscription: the signed authorization is intact and one `approve()` fixes it. The `p2approve1` session cannot charge, revoke or refund; it opens `#/approve/<token>`. |
 | `prepareRefund(...)` / `resolveRefund(...)` / `verifyRefund(...)` | Merchant-sent refunds, verified by P2Flux. |
+| `createPaymentLink($terms)` | `kind`, `recipient`, `amount`, optional `label`, `expires_at`, `gas_payment_mode`, `period`, `periods` → a public `link` and a private `manage` token. Nothing is stored. |
+| `openPaymentLink($link, $payer = null)` | For a checkout of your own: the intent or setup token a link opens into. |
+| `paymentLinkStatus(['link' => ...] or ['manage' => ...])` | Invoice paid or not; with `manage`, every payment read from chain or every subscriber. |
+| `collectPaymentLink($manage, $subscriptionId)` / `stopPaymentLink($manage, $subscriptionId)` | "Collect now" (a `ChargeResult`, never throws) and "stop collecting" (reversible) for one subscriber. |
 
 ## Paying the network fee in USDC
 

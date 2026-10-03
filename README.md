@@ -157,6 +157,24 @@ match ($result->action) {
 error. Only transport-level surprises are exceptional, and an unreachable API says nothing about
 whether the charge landed. See [Subscriptions](docs/subscriptions.md).
 
+## Payment links
+
+No server needed: create a link once and send it by e-mail, chat or QR code.
+
+```php
+$link = $p2flux->createPaymentLink([
+    'kind' => 'once', // 'reusable' for a fixed price, 'subscription' with 'period' for a plan
+    'recipient' => getenv('P2FLUX_RECIPIENT'),
+    'amount' => '120.00',
+    'label' => 'Invoice 2026-041',
+]);
+$forBuyer = $p2flux->checkoutLink('link', $link['link']);
+$forYou = $p2flux->checkoutLink('links', $link['manage']); // private: who paid, every payment
+```
+
+An invoice link can be paid once - the contract itself refuses a second payment. Subscription links
+are collected by P2Flux every period. See [Payment links](docs/payment-links.md).
+
 ## Charge AI agents (x402 paywall)
 
 AI agents pay for a page or an API route in USDC, per request, with the open x402 standard. You say
@@ -230,7 +248,8 @@ There is no Symfony bundle, and none is needed. For Laravel, the optional
 | [Laravel](docs/frameworks/laravel.md) · [Symfony](docs/frameworks/symfony.md) | Framework integration |
 | [Testing](docs/testing.md) | Fake transport, canned responses, no crypto spent |
 | [Production checklist](docs/production-checklist.md) | Before real money |
-| [Call and result contract](docs/protocol-contract.md) | All 18 operations in one table |
+| [Payment links](docs/payment-links.md) | Invoices, fixed prices and subscriptions sent as a URL |
+| [Call and result contract](docs/protocol-contract.md) | All 26 operations in one table |
 | [Examples](examples/) | Runnable, one operation per file |
 
 Full protocol docs: [p2flux.com/docs](https://p2flux.com/docs/) ·

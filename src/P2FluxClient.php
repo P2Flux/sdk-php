@@ -121,6 +121,12 @@ final class P2FluxClient
         'SPONSORED_PERMIT_FAILED' => 'RETRY_LATER',
         // In flight: look the settlement up, never send another one.
         'SPONSORSHIP_CONFIRMING' => 'WAIT',
+        /* Payment links: a link this deployment did not sign, one past its date, a kind not offered
+         * (or its contract replaced, or the subscription store full), a wallet already subscribed. */
+        'INVALID_LINK' => 'INVALID_REQUEST',
+        'LINK_EXPIRED' => 'INVALID_REQUEST',
+        'LINK_UNAVAILABLE' => 'INVALID_REQUEST',
+        'ALREADY_SUBSCRIBED' => 'INVALID_REQUEST',
     ];
 
     private string $apiUrl;
@@ -134,7 +140,8 @@ final class P2FluxClient
         'api-test.p2flux.com' => 'https://pay-test.p2flux.com',
     ];
 
-    private const CHECKOUT_PAGES = ['pay', 'subscribe', 'cancel', 'refund', 'approve'];
+    /** `link` opens a payment link for a buyer; `links` is the merchant's private overview of one. */
+    private const CHECKOUT_PAGES = ['pay', 'subscribe', 'cancel', 'refund', 'approve', 'link', 'links'];
     /** @var null|callable(string, array<string, mixed>, int): array{0: int, 1: array<string, mixed>} */
     private $transport;
 
@@ -693,6 +700,82 @@ final class P2FluxClient
         }
 
         return ChargeResult::fromArray($body);
+    }
+
+    /**
+     * Create a payment link - nothing is stored. Send `checkoutLink('link', $link['link'])` to buyers
+     * (e-mail, chat, QR code); keep `$link['manage']` for yourself (`checkoutLink('links', ...)`).
+     *
+     * `kind`: `once` (an invoice the contract lets settle only once), `reusable` (a fixed price) or
+     * `subscription` (a plan P2Flux collects every `period` seconds, at least a day; `periods` limits
+     * the number of charges). Optional `label` (up to 60 characters, no web addresses), `expires_at`
+     * (unix seconds) and, for one-time kinds, `gas_payment_mode`.
+     *
+     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int} $terms
+     * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, ...}
+     */
+    public function createPaymentLink(array $terms): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/links', $terms);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * For a checkout of your own: the intent (one-time kinds) or setup token (subscriptions) a link
+     * opens into. The P2Flux checkout calls this itself.
+     *
+     * @return array<string, mixed>
+     */
+    public function openPaymentLink(string $link, ?string $payer = null): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/links/open', ['link' => $link] + ($payer === null ? [] : ['payer' => $payer]));
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * What a link has collected. Pass `['link' => ...]` for the public view (invoice paid or not) or
+     * `['manage' => ...]` for yours: who paid, every payment read from chain (`complete: false` means
+     * ask again for more), every subscriber of a subscription link.
+     *
+     * @param array{link?: string, manage?: string} $token
+     * @return array{kind: string, state: string, paid?: bool, payment?: array<string, mixed>, payments?: list<array<string, mixed>>, complete?: bool, subscribers?: list<array<string, mixed>>, ...}
+     */
+    public function paymentLinkStatus(array $token): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/links/status', $token);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /** "Collect now" for one subscriber of your subscription link. Same answers as charge(); never throws. */
+    public function collectPaymentLink(string $manage, string $subscriptionId): ChargeResult
+    {
+        try {
+            [, $body] = $this->post('/v1/links/collect', ['manage' => $manage, 'subscription_id' => $subscriptionId]);
+        } catch (P2FluxException $e) {
+            return ChargeResult::fromArray(['status' => 'NETWORK_ERROR'] + $e->raw);
+        }
+
+        return ChargeResult::fromArray($body);
+    }
+
+    /**
+     * Stop automatic collection for one subscriber (collectPaymentLink resumes it). Only the buyer's
+     * wallet can revoke the permission on chain.
+     *
+     * @return array{subscription_id: string, state: string}
+     */
+    public function stopPaymentLink(string $manage, string $subscriptionId): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/links/stop', ['manage' => $manage, 'subscription_id' => $subscriptionId]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
     }
 
     /**

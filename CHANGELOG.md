@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0 - 2026-10-04
+
+### Added
+
+- **Payment links** - `createPaymentLink()`, `paymentLinkStatus()`, `collectPaymentLink()`,
+  `stopPaymentLink()` and, for custom checkouts, `openPaymentLink()`. Invoices paid once, fixed
+  prices paid many times, and subscriptions P2Flux collects for you - no server needed.
+  (https://p2flux.com/docs/payment-links.html)
+- `checkoutLink('link' | 'links', $token)` for the buyer's link and the merchant's overview.
+- Error codes `INVALID_LINK`, `LINK_EXPIRED`, `LINK_UNAVAILABLE`, `ALREADY_SUBSCRIBED`.
+
 ## 0.9.0 - 2026-10-03
 
 ### Added

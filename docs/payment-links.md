@@ -1,0 +1,54 @@
+# Payment links
+
+A payment link is a standing offer you send as a URL - by e-mail, in a chat, as a QR code - with no
+server of your own. Nothing is stored to create one: the link is signed terms, like an intent.
+
+| Kind | What the buyer gets | Valid for |
+|---|---|---|
+| `once` | An invoice. It can be paid once: every open mints the same reference, and the contract refuses a second payment with it. | up to 30 days (default 7) |
+| `reusable` | A fixed price, payable any number of times. | up to a year |
+| `subscription` | A plan: the buyer signs once, P2Flux collects every period. Period at least one day. | up to a year (for new signups) |
+
+```php
+$plan = $p2flux->createPaymentLink([
+    'kind' => 'subscription',
+    'recipient' => getenv('P2FLUX_RECIPIENT'),
+    'amount' => '9.00',
+    'period' => 30 * 86400,
+    'periods' => 12, // omit for until cancelled
+    'label' => 'Monthly support plan',
+]);
+
+$p2flux->checkoutLink('link', $plan['link']); // send this to buyers
+$p2flux->checkoutLink('links', $plan['manage']); // your private overview - keep it like a password
+```
+
+## What you see
+
+```php
+$status = $p2flux->paymentLinkStatus(['manage' => $plan['manage']]);
+$status['subscribers']; // who subscribed, their state, the last period paid, the next attempt
+```
+
+- `once`: `paid` and the `payment` (with the payer when you ask with `manage`).
+- `reusable`: every `payments` entry read from the chain. Reading is incremental and remembered; when
+  `complete` is `false`, ask again for the rest.
+- `subscription`: `subscribers`. Each due period is collected automatically; when the buyer cannot pay,
+  P2Flux retries after 1 hour, 6 hours and then daily, only in the first quarter of the period (at most
+  3 days), and then skips that period - the contract has no catch-up. Three skipped periods in a row
+  end the subscription.
+
+`collectPaymentLink($manage, $subscriptionId)` collects the current period now; `stopPaymentLink()`
+stops automatic collection for one subscriber (collecting again resumes it). Only the buyer's wallet
+can revoke the permission on chain - they do it by opening the link again and choosing "Manage your
+subscription".
+
+## The description
+
+The `label` is shown to the buyer as "Note from the recipient, not verified by P2Flux": up to 60
+characters - letters, digits, currency signs, spaces and `. , : ; ' ( ) # & + _ ! ? % - /`, no web or
+e-mail addresses.
+
+## Errors
+
+`INVALID_LINK`, `LINK_EXPIRED`, `LINK_UNAVAILABLE`, `ALREADY_SUBSCRIBED` - see [Errors](errors.md).
