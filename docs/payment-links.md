@@ -1,7 +1,7 @@
 # Payment links
 
 A payment link is a standing offer you send as a URL - by e-mail, in a chat, as a QR code - with no
-server of your own. Nothing is stored to create one: the link is signed terms, like an intent.
+server of your own. No record is kept to create one: the link is signed terms, like an intent.
 
 | Kind | What the buyer gets | Valid for |
 |---|---|---|
@@ -60,7 +60,8 @@ that does not pay keeps nothing.
 The `label` is shown to the buyer as "Note from the link's creator, not verified by P2Flux": up to 60
 characters - letters, ASCII digits, currency signs, spaces and `. , : ; ' ( ) # & + _ ! ? % - /`; nothing
 that reads as a web or e-mail address (so no letter right after a full stop) and no invisible or
-look-alike characters, and no mention of P2Flux.
+look-alike characters, and no mention of P2Flux. Do not put sensitive or unnecessary personal data in it:
+anyone with the link can read it.
 
 ## Errors
 
