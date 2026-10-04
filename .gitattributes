@@ -1,6 +1,5 @@
-# Keep the Composer dist archive to the library itself. package.json stays in it: the npm pin used
-# by P2Flux/core installs from GitHub's archive (which applies these rules) and needs its version.
-/tests            export-ignore
+# Keep the Composer dist archive to the library itself. package.json and tests/ stay in it: the npm
+# pin used by P2Flux/core installs from GitHub's archive (which applies these rules) and runs them.
 /.gitleaks.toml   export-ignore
 /.gitattributes   export-ignore
 /.gitignore       export-ignore
