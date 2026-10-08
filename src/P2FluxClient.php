@@ -127,6 +127,11 @@ final class P2FluxClient
         'LINK_EXPIRED' => 'INVALID_REQUEST',
         'LINK_UNAVAILABLE' => 'INVALID_REQUEST',
         'ALREADY_SUBSCRIBED' => 'INVALID_REQUEST',
+        /* Sanctions screening (no KYC): the paying wallet is on the U.S. OFAC list or restricted by the
+         * token issuer - stop charging it; the merchant's receiving wallet is on the OFAC list - nothing
+         * can be created for or sent to it. Nothing was submitted in either case. */
+        'PAYER_SANCTIONED' => 'STOP_SUBSCRIPTION',
+        'RECIPIENT_SANCTIONED' => 'INVALID_REQUEST',
     ];
 
     private string $apiUrl;
@@ -443,6 +448,7 @@ final class P2FluxClient
      *     amount?: string,
      *     settlement_receipt?: string,
      *     gas_payment_mode?: 'native'|'payment_token',
+     *     screening?: 'clear'|'sanctioned'|'unknown',
      *     accounting?: array{
      *         payment_units: string,
      *         payment_fee_units: string,

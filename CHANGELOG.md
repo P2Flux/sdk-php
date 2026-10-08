@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.0 - 2026-10-08
+
+### Added
+
+- **Sanctions screening** (live since 7 October 2026): error codes `PAYER_SANCTIONED` (action
+  `STOP_SUBSCRIPTION` - stop charging that subscription) and `RECIPIENT_SANCTIONED` (action
+  `INVALID_REQUEST` - the receiving wallet is on the OFAC list; retrying gives the same answer).
+  Nothing was submitted when either is returned. Show buyers a neutral message such as "This wallet
+  cannot be used with P2Flux. No transaction was submitted." (https://p2flux.com/docs/errors.html#sanctions)
+- `verifyPayment()` passes through `screening: 'clear' | 'sanctioned' | 'unknown'` (documented in the
+  return shape).
+
 ## 0.10.0 - 2026-10-04
 
 ### Added
