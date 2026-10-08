@@ -136,6 +136,12 @@ final class Paywall
             if ($e->action === 'INVALID_REQUEST') {
                 throw $e;
             }
+            /* Only an unreachable or failing P2Flux is "unavailable" (which onUnavailable 'free' may serve
+             * through). A refusal - a rate limit above all - is an answer: 402 again, never free, and never
+             * a 503 for every honest agent because somebody flooded junk headers. */
+            if (!in_array($e->status, self::OUTAGE_CODES, true)) {
+                return $this->required($price, $url, $mimeType, $e->status === 'RATE_LIMITED' ? 'rate_limited' : 'payment_refused');
+            }
 
             return $this->unavailable();
         }
@@ -346,6 +352,9 @@ final class Paywall
     }
 
     /** @return array<string, mixed> */
+    /** What means "P2Flux could not answer" rather than "P2Flux refused": transport and server failures. */
+    private const OUTAGE_CODES = ['NETWORK_ERROR', 'INTERNAL_ERROR', 'RPC_ERROR', 'RELAYER_NOT_READY', 'RPC_BUSY'];
+
     private function unavailable(): array
     {
         if ($this->onUnavailable === 'free') {

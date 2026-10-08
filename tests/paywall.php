@@ -52,12 +52,17 @@ final class FakeApi
     public array $used = [];
     public bool $down = false;
     public bool $badConfig = false;
+    /** Throw this P2Flux error code on every call (a 429 is RATE_LIMITED, a 5xx is INTERNAL_ERROR). */
+    public ?string $throwStatus = null;
 
     public function __invoke(string $url, array $payload, int $timeout): array
     {
         $this->calls[] = [parse_url($url, PHP_URL_PATH), $payload];
         if ($this->down) {
             throw new P2FluxException('NETWORK_ERROR', 'RETRY_LATER');
+        }
+        if ($this->throwStatus !== null && str_ends_with($url, '/redeem')) {
+            throw new P2FluxException($this->throwStatus, 'RETRY_LATER');
         }
         if ($this->badConfig) {
             return [400, ['error' => 'INVALID_REQUEST', 'action' => 'INVALID_REQUEST']];
@@ -247,3 +252,18 @@ check('without a cache the same payment again is still refused here, without ask
 
 echo "\n" . ($failures === 0 ? 'all passed' : "{$failures} failed") . "\n";
 exit($failures === 0 ? 0 : 1);
+
+echo "\nP2Flux refusing a redeem is an answer, not an outage\n";
+$limited = new FakeApi();
+$limited->throwStatus = 'RATE_LIMITED';
+foreach ([[], ['onUnavailable' => 'free']] as $over) {
+    $r = paywall($limited, $over)->guard(pay('flood'), 'https://shop.example/report');
+    check('a rate limit answers 402, never free (' . json_encode($over) . ')', $r['allow'] === false && $r['status'] === 402);
+    check('...with the reason', ($r['body']['error'] ?? '') === 'rate_limited');
+}
+$broken = new FakeApi();
+$broken->throwStatus = 'INTERNAL_ERROR';
+$r = paywall($broken)->guard(pay('x'), 'https://shop.example/report');
+check('a server failure is an outage: 503', $r['allow'] === false && $r['status'] === 503);
+$r = paywall($broken, ['onUnavailable' => 'free'])->guard(pay('x'), 'https://shop.example/report');
+check('...served free only when the seller chose so', $r['allow'] === true && $r['paid'] === false);

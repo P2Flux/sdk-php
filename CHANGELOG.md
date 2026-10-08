@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.1 - 2026-10-08
+
+### Fixed
+
+- Paywall helper: a refusal from P2Flux (a 429 rate limit above all) is answered with a 402 again -
+  never served free through `onUnavailable` 'free', and never turned into a 503 for every agent
+  because somebody flooded junk payment headers. Only an unreachable or failing P2Flux
+  (`NETWORK_ERROR`, `INTERNAL_ERROR`, `RPC_ERROR`, `RELAYER_NOT_READY`, `RPC_BUSY`) is "unavailable".
+
 ## 0.11.0 - 2026-10-08
 
 ### Added
