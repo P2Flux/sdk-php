@@ -38,6 +38,8 @@ The agent needs USDC on Base and no ETH.
 | `recipient` | required | Your wallet on Base. Every payment goes to it. |
 | `price` | required | USDC per request, e.g. `'0.05'`. At least `0.01`. |
 | `agentsOnly` | `false` | `true`: only AI agents and programs pay; browsers and search engines pass free |
+
+Agent detection is by the request's User-Agent (and Web Bot Auth signatures where present): a bot that presents a browser's User-Agent reads free with `agentsOnly`. Use `agentsOnly: false` for an API that programs call.
 | `prepaid` | `true` | Offer the prepaid balance next to pay-per-request, when P2Flux offers it |
 | `onUnavailable` | `'refuse'` | What happens when P2Flux cannot be reached. See below. |
 | `cacheGet` | none | `fn (string $key): mixed`, returning `null` for a miss |
