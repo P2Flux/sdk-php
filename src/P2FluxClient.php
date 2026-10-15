@@ -800,10 +800,14 @@ final class P2FluxClient
      */
     public function handleNotification(string|array $notification, array $expect): array
     {
-        $reference = strtolower((string) ($expect['reference'] ?? ''));
-        $linkId = strtolower((string) ($expect['link_id'] ?? ''));
+        $reference = is_string($expect['reference'] ?? null) ? strtolower($expect['reference']) : '';
+        $linkId = is_string($expect['link_id'] ?? null) ? strtolower($expect['link_id']) : '';
         if ($reference === '' && $linkId === '') {
             throw new \InvalidArgumentException('handleNotification needs reference or link_id in $expect');
+        }
+        // A malformed id would match too much ('0x' is a prefix of every reference).
+        if (($reference !== '' && preg_match('/^0x[0-9a-f]{64}$/', $reference) !== 1) || ($linkId !== '' && preg_match('/^0x[0-9a-f]{32}$/', $linkId) !== 1)) {
+            throw new \InvalidArgumentException('reference must be the 32-byte reference from createPayment, link_id the 16-byte link id');
         }
         $event = is_string($notification) ? json_decode($notification, true) : $notification;
         if (!is_array($event)) {
@@ -855,7 +859,7 @@ final class P2FluxClient
             if ($manage === '' || $linkId === '') {
                 throw new \InvalidArgumentException("subscription events need link_id and manage (the link's manage token) in \$expect");
             }
-            if (strtolower((string) ($data['link_id'] ?? '')) !== $linkId) {
+            if ((is_string($data['link_id'] ?? null) ? strtolower($data['link_id']) : '') !== $linkId) {
                 return $no('NOT_YOUR_ORDER');
             }
             $period = $data['period_index'] ?? null;
@@ -867,12 +871,12 @@ final class P2FluxClient
                 return $answer['no'];
             }
             $status = $answer['ok'];
-            if (strtolower((string) ($status['id'] ?? '')) !== $linkId) {
+            if ((is_string($status['id'] ?? null) ? strtolower($status['id']) : '') !== $linkId) {
                 return $no('NOT_YOUR_ORDER');
             }
             foreach ($status['subscribers'] ?? [] as $subscriber) {
-                $id = strtolower((string) ($subscriber['subscription_id'] ?? ''));
-                if ($id === '' || $id !== strtolower((string) ($data['subscription_id'] ?? ''))) {
+                $id = is_string($subscriber['subscription_id'] ?? null) ? strtolower($subscriber['subscription_id']) : '';
+                if ($id === '' || $id !== (is_string($data['subscription_id'] ?? null) ? strtolower($data['subscription_id']) : '')) {
                     continue;
                 }
                 $last = (int) ($subscriber['last_period'] ?? -1);
@@ -884,9 +888,9 @@ final class P2FluxClient
                     return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'dedupe_key' => "{$id}:{$period}", 'subscriber' => $subscriber];
                 }
 
-                // The state that counts is the one the manage view shows now.
+                // The state that counts is the one the manage view shows now: grant access from it, not per event.
                 return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type,
-                    'dedupe_key' => $id . ':' . (string) ($subscriber['state'] ?? '') . ':' . $last, 'subscriber' => $subscriber];
+                    'dedupe_key' => $id . ':' . (is_string($subscriber['state'] ?? null) ? $subscriber['state'] : '') . ':' . $last, 'subscriber' => $subscriber];
             }
 
             return $no('NOT_FOUND');
