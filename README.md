@@ -119,7 +119,7 @@ Add `notify_url` (a public https URL) to `createPayment` or `createPaymentLink` 
 carries no secret - it is a hint - so confirm it before fulfilling:
 
 ```php
-// your notify endpoint (answer 2xx whatever the outcome)
+// your notify endpoint: 2xx when this returns, 5xx when it throws (not final yet - it is sent again)
 $result = $p2flux->handleNotification(file_get_contents('php://input'), ['reference' => $order->p2flux_reference]);
 if ($result['confirmed']) { markOrderPaid($order, $result['dedupe_key']); } // idempotent on dedupe_key, never on the event id
 ```

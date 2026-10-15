@@ -786,13 +786,19 @@ final class P2FluxClient
      * A notification is a hint, never a proof: it carries no secret. This asks the API again - verify
      * for a payment, the manage view for a subscription - and checks the answer belongs to YOUR order.
      * Pass `reference` (stored with the order from createPayment) or your payment link's `link_id`, plus
-     * its `manage` token for subscription events. Fulfil only when `confirmed` is true, idempotently on
-     * `dedupe_key` - built from the VERIFIED payment (reference and transaction, or subscription and
-     * period), never from the event's own id, which anyone can make up. Answer the POST with any 2xx.
+     * its `manage` token for subscription events.
      *
-     * A wrong, forged or replayed event returns `confirmed => false`; the API is not even asked when the
-     * event does not name your order. Throws InvalidArgumentException on a missing `$expect`, and
-     * P2FluxException when the API cannot answer - reply 5xx then, and the notification is retried.
+     * - `payment.paid` confirmed: fulfil idempotently on `dedupe_key` (`reference:tx_hash`, from the API's
+     *   verdict - never the event's own id, which anyone can make up).
+     * - `subscription.charged` confirmed: the subscriber is paid through `subscriber.last_period`; grant
+     *   access up to there (idempotent on `dedupe_key`), never "one more period per event".
+     * - `subscription.updated` confirmed: apply `subscriber.state` as it is now (no `dedupe_key`).
+     *
+     * Answer the POST with a 2xx when this returns. It THROWS P2FluxException when the answer is not
+     * final yet (a payment still confirming, the API busy or unreachable): answer 5xx then, and P2Flux
+     * sends it again. A wrong, forged or replayed event returns `confirmed => false`, and when the event
+     * does not even name your order the API is not asked. InvalidArgumentException on a missing or
+     * malformed `$expect`.
      *
      * @param string|array<string, mixed> $notification
      * @param array{reference?: string, link_id?: string, manage?: string} $expect
@@ -817,7 +823,8 @@ final class P2FluxClient
         $type = is_string($event['type'] ?? null) ? $event['type'] : '';
         $data = is_array($event['data'] ?? null) ? $event['data'] : [];
         $no = static fn (string $reason, array $extra = []): array => ['confirmed' => false, 'event_id' => $eventId, 'type' => $type, 'reason' => $reason] + $extra;
-        $ours = static fn (mixed $ref): bool => is_string($ref) && ($reference !== '' ? strtolower($ref) === $reference : str_starts_with(strtolower($ref), $linkId));
+        $ours = static fn (mixed $ref): bool => is_string($ref) && preg_match('/^0x[0-9a-f]{64}$/', strtolower($ref)) === 1
+            && ($reference !== '' ? strtolower($ref) === $reference : str_starts_with(strtolower($ref), $linkId));
         // An answer about the request (a bad intent, an unknown link) is a verdict; the API being unreachable is not.
         $asked = static function (callable $work) use ($no): array {
             try {
@@ -834,7 +841,8 @@ final class P2FluxClient
             if (!is_string($data['intent'] ?? null) || !is_string($data['tx_hash'] ?? null)) {
                 return $no('MALFORMED');
             }
-            if (!$ours($data['reference'] ?? null)) {
+            // Read (not trusted) locally: an intent for another order is refused without spending an API call.
+            if (!$ours($data['reference'] ?? null) || !$ours(self::intentReference($data['intent']))) {
                 return $no('NOT_YOUR_ORDER');
             }
             $answer = $asked(fn () => $this->verifyPayment($data['intent'], $data['tx_hash']));
@@ -843,7 +851,14 @@ final class P2FluxClient
             }
             $verdict = $answer['ok'];
             if (($verdict['valid'] ?? false) !== true) {
-                return $no((string) ($verdict['code'] ?? 'INVALID'), ['payment' => $verdict]);
+                $code = is_string($verdict['code'] ?? null) ? $verdict['code'] : 'INTERNAL_ERROR';
+                $action = self::ACTIONS[$code] ?? 'RETRY_LATER';
+                // Not final yet (still confirming, RPC trouble): thrown, so the endpoint answers 5xx and it comes again.
+                if ($action === 'WAIT' || $action === 'RETRY_LATER') {
+                    throw new P2FluxException($code, $action, $verdict);
+                }
+
+                return $no($code, ['payment' => $verdict]);
             }
             // The reference that counts is the API's, from the verdict - not the one in the notification.
             if (!$ours($verdict['reference'] ?? null)) {
@@ -879,18 +894,17 @@ final class P2FluxClient
                 if ($id === '' || $id !== (is_string($data['subscription_id'] ?? null) ? strtolower($data['subscription_id']) : '')) {
                     continue;
                 }
-                $last = (int) ($subscriber['last_period'] ?? -1);
-                if ($type === 'subscription.charged') {
-                    if ($last < $period) {
-                        return $no('NOT_CHARGED', ['subscriber' => $subscriber]);
-                    }
-
-                    return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'dedupe_key' => "{$id}:{$period}", 'subscriber' => $subscriber];
+                if ($type === 'subscription.updated') {
+                    return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'subscriber' => $subscriber];
+                }
+                /* Only the subscriber's latest collected period: an older one (or one skipped and never
+                 * paid) is not something to grant now - a newer charge event covers the subscription. */
+                $last = is_int($subscriber['last_period'] ?? null) ? $subscriber['last_period'] : -1;
+                if ($period !== $last) {
+                    return $no($period < $last ? 'NOT_CURRENT' : 'NOT_CHARGED', ['subscriber' => $subscriber]);
                 }
 
-                // The state that counts is the one the manage view shows now: grant access from it, not per event.
-                return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type,
-                    'dedupe_key' => $id . ':' . (is_string($subscriber['state'] ?? null) ? $subscriber['state'] : '') . ':' . $last, 'subscriber' => $subscriber];
+                return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'dedupe_key' => "{$id}:{$last}", 'subscriber' => $subscriber];
             }
 
             return $no('NOT_FOUND');
@@ -1156,6 +1170,16 @@ final class P2FluxClient
     /**
      * @param array<string, mixed> $body
      */
+    /** The reference inside a P2Flux intent token, read without checking its signature (the API checks that). */
+    private static function intentReference(string $intent): string
+    {
+        $part = explode('.', $intent)[2] ?? '';
+        $json = base64_decode(strtr($part, '-_', '+/'), true);
+        $payload = is_string($json) ? json_decode($json, true) : null;
+
+        return is_array($payload) && is_string($payload['reference'] ?? null) ? $payload['reference'] : '';
+    }
+
     private function throwIfError(int $httpStatus, array $body): void
     {
         if ($httpStatus < 400) {
