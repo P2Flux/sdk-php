@@ -32,7 +32,7 @@ integration that renders its own checkout.
 
 ## Verify server-side
 
-There are **no webhooks**. Completion reaches you as a browser message from the hosted checkout,
+Webhooks are optional (`notify_url`, see the README). Completion reaches you as a browser message from the hosted checkout,
 `p2flux.payment.completed { tx_hash, settlement_receipt }`, and a browser message is a claim. Your
 server's verdict is what marks the order paid.
 

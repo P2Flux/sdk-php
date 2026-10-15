@@ -341,8 +341,11 @@ final class P2FluxClient
      * `capabilities()` first; not every network and token supports it, and an unsupported request is
      * refused here rather than after a customer has been sent to a checkout that cannot work.
      *
-     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token'} $terms
-     * @return array{intent: string, reference: string, amount: string, ...}
+     * `notify_url` is optional: a public https URL P2Flux POSTs a `payment.paid` event to once the
+     * payment is verified on chain. Omit it and nothing changes. Answer it with handleNotification().
+     *
+     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string} $terms
+     * @return array{intent: string, reference: string, amount: string, notify_url?: string, ...}
      */
     public function createPayment(array $terms): array
     {
@@ -715,9 +718,10 @@ final class P2FluxClient
      * `kind`: `once` (an invoice the contract lets settle only once), `reusable` (a fixed price) or
      * `subscription` (a plan P2Flux collects every `period` seconds, at least a day; `periods` limits
      * the number of charges). Optional `label` (up to 60 characters, no web addresses), `expires_at`
-     * (unix seconds) and, for one-time kinds, `gas_payment_mode`.
+     * (unix seconds) and, for one-time kinds, `gas_payment_mode`. Optional `notify_url`: a webhook for
+     * every payment through the link (`payment.paid`, or `subscription.charged` / `subscription.updated`).
      *
-     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int} $terms
+     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string} $terms
      * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, ...}
      */
     public function createPaymentLink(array $terms): array
@@ -773,6 +777,82 @@ final class P2FluxClient
         $this->throwIfError($httpStatus, $body);
 
         return $body;
+    }
+
+    /**
+     * Answer a webhook from P2Flux: the raw body of the POST to your `notify_url` (string) or its
+     * decoded array.
+     *
+     * A notification is a hint, never a proof: it carries no secret. This asks the API again - verify
+     * for a payment, the manage view for a subscription - and checks the answer belongs to YOUR order.
+     * Pass `reference` (stored with the order from createPayment) or `link_id` (your payment link),
+     * plus `manage` (the link's manage token) for subscription events. Fulfil only when `confirmed`
+     * is true; answer the POST with any 2xx either way. The same event can arrive more than once:
+     * deduplicate on `event_id`. Never throws on a wrong or forged event, only on a missing `$expect`
+     * (InvalidArgumentException) or an unreachable API (P2FluxException).
+     *
+     * @param string|array<string, mixed> $notification
+     * @param array{reference?: string, link_id?: string, manage?: string} $expect
+     * @return array{confirmed: bool, event_id: string, type: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>}
+     */
+    public function handleNotification(string|array $notification, array $expect): array
+    {
+        $reference = strtolower((string) ($expect['reference'] ?? ''));
+        $linkId = strtolower((string) ($expect['link_id'] ?? ''));
+        if ($reference === '' && $linkId === '') {
+            throw new \InvalidArgumentException('handleNotification needs reference or link_id in $expect');
+        }
+        $event = is_string($notification) ? json_decode($notification, true) : $notification;
+        if (!is_array($event)) {
+            return ['confirmed' => false, 'event_id' => '', 'type' => '', 'reason' => 'MALFORMED'];
+        }
+        $eventId = (string) ($event['id'] ?? '');
+        $type = (string) ($event['type'] ?? '');
+        $data = is_array($event['data'] ?? null) ? $event['data'] : [];
+        $no = static fn (string $reason, array $extra = []): array => ['confirmed' => false, 'event_id' => $eventId, 'type' => $type, 'reason' => $reason] + $extra;
+
+        if ($type === 'payment.paid') {
+            if (!is_string($data['intent'] ?? null) || !is_string($data['tx_hash'] ?? null)) {
+                return $no('MALFORMED');
+            }
+            $verdict = $this->verifyPayment($data['intent'], $data['tx_hash']);
+            if (($verdict['valid'] ?? false) !== true) {
+                return $no((string) ($verdict['code'] ?? 'INVALID'), ['payment' => $verdict]);
+            }
+            // The reference comes from the API's verdict, never from the notification.
+            $ref = strtolower((string) ($verdict['reference'] ?? ''));
+            $ours = $reference !== '' ? $ref === $reference : str_starts_with($ref, $linkId);
+
+            return $ours
+                ? ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'payment' => $verdict]
+                : $no('NOT_YOUR_ORDER', ['payment' => $verdict]);
+        }
+
+        if ($type === 'subscription.charged' || $type === 'subscription.updated') {
+            $manage = (string) ($expect['manage'] ?? '');
+            if ($manage === '') {
+                throw new \InvalidArgumentException("subscription events need manage (the link's manage token) in \$expect");
+            }
+            $status = $this->paymentLinkStatus(['manage' => $manage]);
+            $id = strtolower((string) ($status['id'] ?? ''));
+            if (($linkId !== '' && $id !== $linkId) || $id !== strtolower((string) ($data['link_id'] ?? ''))) {
+                return $no('NOT_YOUR_ORDER');
+            }
+            foreach ($status['subscribers'] ?? [] as $subscriber) {
+                if (strtolower((string) ($subscriber['subscription_id'] ?? '')) !== strtolower((string) ($data['subscription_id'] ?? ''))) {
+                    continue;
+                }
+                if ($type === 'subscription.charged' && (int) ($subscriber['last_period'] ?? -1) < (int) ($data['period_index'] ?? PHP_INT_MAX)) {
+                    return $no('NOT_CHARGED', ['subscriber' => $subscriber]);
+                }
+
+                return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'subscriber' => $subscriber];
+            }
+
+            return $no('NOT_FOUND');
+        }
+
+        return $no('UNKNOWN_EVENT');
     }
 
     /** "Collect now" for one subscriber of your subscription link. Same answers as charge(); never throws. */

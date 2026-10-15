@@ -93,8 +93,8 @@ The intent rides in the URL fragment, which browsers never send to a server or p
 
 ## Verify before fulfilling
 
-**P2Flux sends no webhooks.** The browser message says what a wallet did; your server's verdict is
-what decides.
+**Webhooks are optional and never decide.** The browser message (or a webhook) says what happened; your
+server's verdict is what decides.
 
 ```php
 $verdict = $p2flux->verifyPayment($intent, $txHash, $settlementReceipt);
@@ -110,6 +110,23 @@ $verdict = $p2flux->verifyPayment($intent, $txHash, $settlementReceipt);
 Lost the hash entirely? `recoverPayment($intent)` finds the settlement from the intent alone.
 
 Full walk-through: [The payment lifecycle](docs/payment-flow.md).
+
+### Optional webhooks
+
+Add `notify_url` (a public https URL) to `createPayment` or `createPaymentLink` and P2Flux POSTs a
+`payment.paid` event there once the payment is verified on chain (subscription links:
+`subscription.charged` and `subscription.updated`), retrying for about 18 hours. The notification
+carries no secret - it is a hint - so confirm it before fulfilling:
+
+```php
+// your notify endpoint (answer 2xx whatever the outcome)
+$result = $p2flux->handleNotification(file_get_contents('php://input'), ['reference' => $order->p2flux_reference]);
+if ($result['confirmed']) { markOrderPaid($order, $result['payment']['tx_hash']); } // dedupe on event_id
+```
+
+`handleNotification` asks the API again (`verifyPayment`, or the link's manage view for
+subscriptions with `link_id` and `manage`) and checks the answer is for YOUR order. Without
+`notify_url` nothing changes.
 
 ## Pay the network fee in USDC
 

@@ -12,8 +12,10 @@ Who does what, in order, and which step is allowed to decide that an order is pa
 ```
 
 Steps 1, 5 and 6 are yours and happen on your server. Steps 2 to 4 happen in a browser you do not
-control. **P2Flux sends no webhooks**, so there is no server-to-server callback to wait for: the
-browser tells you where to look, and your own verification decides what it means.
+control. **Webhooks are optional**: you need no server-to-server callback - the browser tells you
+where to look, and your own verification decides what it means. If the buyer may close the tab
+before step 5, either run `recoverPayment` from a scheduled job or pass `notify_url` when creating
+the payment and confirm the notification with `handleNotification`.
 
 ## 1. Create the payment on the server
 

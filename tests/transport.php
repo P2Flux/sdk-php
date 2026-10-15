@@ -399,6 +399,38 @@ sort($expected);
 check('every public V1 merchant operation is reachable through the SDK', $reached === $expected,
     'missing: ' . implode(', ', array_diff($expected, $reached)) . ' extra: ' . implode(', ', array_diff($reached, $expected)));
 
+// --- webhooks: a notification is confirmed only by asking the API again ---------------------
+
+$ref = '0x' . str_repeat('12', 32);
+$event = ['id' => '0x' . str_repeat('99', 32), 'type' => 'payment.paid', 'data' => ['intent' => 'p2i1.x', 'tx_hash' => '0xabc', 'reference' => $ref]];
+$stub = new StubTransport(['/v1/payments/verify' => [200, ['valid' => true, 'tx_hash' => '0xabc', 'reference' => $ref, 'amount' => '10.00']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$ok = $client->handleNotification(json_encode($event), ['reference' => $ref]);
+check('handleNotification confirms through verify', $ok['confirmed'] === true && $ok['event_id'] === $event['id']);
+check('it verifies the intent and hash from the event', $stub->calls[0]['payload'] === ['intent' => 'p2i1.x', 'tx_hash' => '0xabc']);
+check('another order is not confirmed', $client->handleNotification($event, ['reference' => '0x' . str_repeat('34', 32)])['reason'] === 'NOT_YOUR_ORDER');
+check('a link payment matches on the link id prefix', $client->handleNotification($event, ['link_id' => substr($ref, 0, 34)])['confirmed'] === true);
+check('garbage is MALFORMED, not an exception', $client->handleNotification('{nope', ['reference' => $ref])['reason'] === 'MALFORMED');
+$stub = new StubTransport(['/v1/payments/verify' => [200, ['valid' => false, 'code' => 'TERMS_MISMATCH']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+check('a forged event is never confirmed', $client->handleNotification($event, ['reference' => $ref])['reason'] === 'TERMS_MISMATCH');
+$threw = false;
+try {
+    $client->handleNotification($event, []);
+} catch (InvalidArgumentException) {
+    $threw = true;
+}
+check('handleNotification insists on knowing your order', $threw);
+
+$link = '0x' . str_repeat('01', 16);
+$sub = '0x' . str_repeat('cd', 32);
+$stub = new StubTransport(['/v1/links/status' => [200, ['kind' => 'subscription', 'id' => $link, 'subscribers' => [['subscription_id' => $sub, 'state' => 'active', 'last_period' => 1]]]]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$charged = ['id' => '0x' . str_repeat('77', 32), 'type' => 'subscription.charged', 'data' => ['link_id' => $link, 'subscription_id' => $sub, 'period_index' => 1]];
+check('a subscription charge is confirmed against the manage view', $client->handleNotification($charged, ['link_id' => $link, 'manage' => 'p2lm.x'])['confirmed'] === true);
+$charged['data']['period_index'] = 2;
+check('a period not yet collected is not confirmed', $client->handleNotification($charged, ['link_id' => $link, 'manage' => 'p2lm.x'])['reason'] === 'NOT_CHARGED');
+
 /* A host that supplies its own transport must never need curl at all.
  *
  * Not tidiness: WordPress.org rejects a plugin that calls curl directly, and a plugin vendoring

@@ -167,7 +167,6 @@ foreach ($pages as $page) {
      * something a reader would act on, and none of them can be true of P2Flux. */
     foreach ([
         'webhook secret', 'webhook signature', 'verify the webhook', 'register a webhook',
-        'webhook url', 'webhook endpoint', 'configure a webhook', 'webhook handler',
         'your api key', 'apikey', "'api_key'", 'authorization: bearer', 'x-api-key',
         'gas-free', 'gas free', 'free transaction', 'no network fee',
     ] as $forbidden) {
@@ -185,8 +184,8 @@ foreach ($pages as $page) {
 // --- the two facts a developer must not be left to guess ---------------------------------
 
 foreach ([
-    'README.md' => 'no webhooks',
-    'docs/payment-flow.md' => 'no webhooks',
+    'README.md' => 'webhooks are optional',
+    'docs/payment-flow.md' => 'webhooks are optional',
     'docs/getting-started.md' => 'no API key',
 ] as $page => $phrase) {
     $text = (string) file_get_contents($root . '/' . $page);
