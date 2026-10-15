@@ -407,13 +407,20 @@ $stub = new StubTransport(['/v1/payments/verify' => [200, ['valid' => true, 'tx_
 $client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
 $ok = $client->handleNotification(json_encode($event), ['reference' => $ref]);
 check('handleNotification confirms through verify', $ok['confirmed'] === true && $ok['event_id'] === $event['id']);
+check('the dedupe key comes from the verified payment', $ok['dedupe_key'] === "{$ref}:0xabc");
+check('a replay with a fresh event id has the same dedupe key', $client->handleNotification(['id' => '0x' . str_repeat('55', 32)] + $event, ['reference' => $ref])['dedupe_key'] === $ok['dedupe_key']);
 check('it verifies the intent and hash from the event', $stub->calls[0]['payload'] === ['intent' => 'p2i1.x', 'tx_hash' => '0xabc']);
+$before = count($stub->calls);
 check('another order is not confirmed', $client->handleNotification($event, ['reference' => '0x' . str_repeat('34', 32)])['reason'] === 'NOT_YOUR_ORDER');
+check('and the API is not even asked', count($stub->calls) === $before);
 check('a link payment matches on the link id prefix', $client->handleNotification($event, ['link_id' => substr($ref, 0, 34)])['confirmed'] === true);
 check('garbage is MALFORMED, not an exception', $client->handleNotification('{nope', ['reference' => $ref])['reason'] === 'MALFORMED');
 $stub = new StubTransport(['/v1/payments/verify' => [200, ['valid' => false, 'code' => 'TERMS_MISMATCH']]]);
 $client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
 check('a forged event is never confirmed', $client->handleNotification($event, ['reference' => $ref])['reason'] === 'TERMS_MISMATCH');
+$stub = new StubTransport(['/v1/payments/verify' => [400, ['error' => 'INVALID_INTENT', 'action' => 'INVALID_REQUEST']]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+check('a refused intent is an answer, not an exception', $client->handleNotification($event, ['reference' => $ref])['reason'] === 'INVALID_INTENT');
 $threw = false;
 try {
     $client->handleNotification($event, []);
@@ -427,9 +434,12 @@ $sub = '0x' . str_repeat('cd', 32);
 $stub = new StubTransport(['/v1/links/status' => [200, ['kind' => 'subscription', 'id' => $link, 'subscribers' => [['subscription_id' => $sub, 'state' => 'active', 'last_period' => 1]]]]]);
 $client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
 $charged = ['id' => '0x' . str_repeat('77', 32), 'type' => 'subscription.charged', 'data' => ['link_id' => $link, 'subscription_id' => $sub, 'period_index' => 1]];
-check('a subscription charge is confirmed against the manage view', $client->handleNotification($charged, ['link_id' => $link, 'manage' => 'p2lm.x'])['confirmed'] === true);
+$result = $client->handleNotification($charged, ['link_id' => $link, 'manage' => 'p2lm.x']);
+check('a subscription charge is confirmed against the manage view', $result['confirmed'] === true && $result['dedupe_key'] === "{$sub}:1");
 $charged['data']['period_index'] = 2;
 check('a period not yet collected is not confirmed', $client->handleNotification($charged, ['link_id' => $link, 'manage' => 'p2lm.x'])['reason'] === 'NOT_CHARGED');
+$charged['data']['period_index'] = 'x';
+check('a period that is not a number is MALFORMED', $client->handleNotification($charged, ['link_id' => $link, 'manage' => 'p2lm.x'])['reason'] === 'MALFORMED');
 
 /* A host that supplies its own transport must never need curl at all.
  *

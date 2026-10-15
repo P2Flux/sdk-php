@@ -121,12 +121,13 @@ carries no secret - it is a hint - so confirm it before fulfilling:
 ```php
 // your notify endpoint (answer 2xx whatever the outcome)
 $result = $p2flux->handleNotification(file_get_contents('php://input'), ['reference' => $order->p2flux_reference]);
-if ($result['confirmed']) { markOrderPaid($order, $result['payment']['tx_hash']); } // dedupe on event_id
+if ($result['confirmed']) { markOrderPaid($order, $result['dedupe_key']); } // idempotent on dedupe_key, never on the event id
 ```
 
 `handleNotification` asks the API again (`verifyPayment`, or the link's manage view for
-subscriptions with `link_id` and `manage`) and checks the answer is for YOUR order. Without
-`notify_url` nothing changes.
+subscriptions with `link_id` and `manage`) and checks the answer is for YOUR order. If the create
+response has no `notify_url`, the payment is not watched (the service is at capacity): keep polling,
+exactly as without webhooks.
 
 ## Pay the network fee in USDC
 

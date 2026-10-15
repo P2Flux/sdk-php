@@ -785,15 +785,18 @@ final class P2FluxClient
      *
      * A notification is a hint, never a proof: it carries no secret. This asks the API again - verify
      * for a payment, the manage view for a subscription - and checks the answer belongs to YOUR order.
-     * Pass `reference` (stored with the order from createPayment) or `link_id` (your payment link),
-     * plus `manage` (the link's manage token) for subscription events. Fulfil only when `confirmed`
-     * is true; answer the POST with any 2xx either way. The same event can arrive more than once:
-     * deduplicate on `event_id`. Never throws on a wrong or forged event, only on a missing `$expect`
-     * (InvalidArgumentException) or an unreachable API (P2FluxException).
+     * Pass `reference` (stored with the order from createPayment) or your payment link's `link_id`, plus
+     * its `manage` token for subscription events. Fulfil only when `confirmed` is true, idempotently on
+     * `dedupe_key` - built from the VERIFIED payment (reference and transaction, or subscription and
+     * period), never from the event's own id, which anyone can make up. Answer the POST with any 2xx.
+     *
+     * A wrong, forged or replayed event returns `confirmed => false`; the API is not even asked when the
+     * event does not name your order. Throws InvalidArgumentException on a missing `$expect`, and
+     * P2FluxException when the API cannot answer - reply 5xx then, and the notification is retried.
      *
      * @param string|array<string, mixed> $notification
      * @param array{reference?: string, link_id?: string, manage?: string} $expect
-     * @return array{confirmed: bool, event_id: string, type: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>}
+     * @return array{confirmed: bool, event_id: string, type: string, dedupe_key?: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>}
      */
     public function handleNotification(string|array $notification, array $expect): array
     {
@@ -806,47 +809,84 @@ final class P2FluxClient
         if (!is_array($event)) {
             return ['confirmed' => false, 'event_id' => '', 'type' => '', 'reason' => 'MALFORMED'];
         }
-        $eventId = (string) ($event['id'] ?? '');
-        $type = (string) ($event['type'] ?? '');
+        $eventId = is_string($event['id'] ?? null) ? $event['id'] : '';
+        $type = is_string($event['type'] ?? null) ? $event['type'] : '';
         $data = is_array($event['data'] ?? null) ? $event['data'] : [];
         $no = static fn (string $reason, array $extra = []): array => ['confirmed' => false, 'event_id' => $eventId, 'type' => $type, 'reason' => $reason] + $extra;
+        $ours = static fn (mixed $ref): bool => is_string($ref) && ($reference !== '' ? strtolower($ref) === $reference : str_starts_with(strtolower($ref), $linkId));
+        // An answer about the request (a bad intent, an unknown link) is a verdict; the API being unreachable is not.
+        $asked = static function (callable $work) use ($no): array {
+            try {
+                return ['ok' => $work()];
+            } catch (P2FluxException $e) {
+                if ($e->action === 'INVALID_REQUEST') {
+                    return ['no' => $no($e->status)];
+                }
+                throw $e;
+            }
+        };
 
         if ($type === 'payment.paid') {
             if (!is_string($data['intent'] ?? null) || !is_string($data['tx_hash'] ?? null)) {
                 return $no('MALFORMED');
             }
-            $verdict = $this->verifyPayment($data['intent'], $data['tx_hash']);
+            if (!$ours($data['reference'] ?? null)) {
+                return $no('NOT_YOUR_ORDER');
+            }
+            $answer = $asked(fn () => $this->verifyPayment($data['intent'], $data['tx_hash']));
+            if (isset($answer['no'])) {
+                return $answer['no'];
+            }
+            $verdict = $answer['ok'];
             if (($verdict['valid'] ?? false) !== true) {
                 return $no((string) ($verdict['code'] ?? 'INVALID'), ['payment' => $verdict]);
             }
-            // The reference comes from the API's verdict, never from the notification.
-            $ref = strtolower((string) ($verdict['reference'] ?? ''));
-            $ours = $reference !== '' ? $ref === $reference : str_starts_with($ref, $linkId);
+            // The reference that counts is the API's, from the verdict - not the one in the notification.
+            if (!$ours($verdict['reference'] ?? null)) {
+                return $no('NOT_YOUR_ORDER', ['payment' => $verdict]);
+            }
 
-            return $ours
-                ? ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'payment' => $verdict]
-                : $no('NOT_YOUR_ORDER', ['payment' => $verdict]);
+            return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type,
+                'dedupe_key' => strtolower((string) $verdict['reference']) . ':' . strtolower((string) ($verdict['tx_hash'] ?? '')), 'payment' => $verdict];
         }
 
         if ($type === 'subscription.charged' || $type === 'subscription.updated') {
             $manage = (string) ($expect['manage'] ?? '');
-            if ($manage === '') {
-                throw new \InvalidArgumentException("subscription events need manage (the link's manage token) in \$expect");
+            if ($manage === '' || $linkId === '') {
+                throw new \InvalidArgumentException("subscription events need link_id and manage (the link's manage token) in \$expect");
             }
-            $status = $this->paymentLinkStatus(['manage' => $manage]);
-            $id = strtolower((string) ($status['id'] ?? ''));
-            if (($linkId !== '' && $id !== $linkId) || $id !== strtolower((string) ($data['link_id'] ?? ''))) {
+            if (strtolower((string) ($data['link_id'] ?? '')) !== $linkId) {
+                return $no('NOT_YOUR_ORDER');
+            }
+            $period = $data['period_index'] ?? null;
+            if ($type === 'subscription.charged' && (!is_int($period) || $period < 0)) {
+                return $no('MALFORMED');
+            }
+            $answer = $asked(fn () => $this->paymentLinkStatus(['manage' => $manage]));
+            if (isset($answer['no'])) {
+                return $answer['no'];
+            }
+            $status = $answer['ok'];
+            if (strtolower((string) ($status['id'] ?? '')) !== $linkId) {
                 return $no('NOT_YOUR_ORDER');
             }
             foreach ($status['subscribers'] ?? [] as $subscriber) {
-                if (strtolower((string) ($subscriber['subscription_id'] ?? '')) !== strtolower((string) ($data['subscription_id'] ?? ''))) {
+                $id = strtolower((string) ($subscriber['subscription_id'] ?? ''));
+                if ($id === '' || $id !== strtolower((string) ($data['subscription_id'] ?? ''))) {
                     continue;
                 }
-                if ($type === 'subscription.charged' && (int) ($subscriber['last_period'] ?? -1) < (int) ($data['period_index'] ?? PHP_INT_MAX)) {
-                    return $no('NOT_CHARGED', ['subscriber' => $subscriber]);
+                $last = (int) ($subscriber['last_period'] ?? -1);
+                if ($type === 'subscription.charged') {
+                    if ($last < $period) {
+                        return $no('NOT_CHARGED', ['subscriber' => $subscriber]);
+                    }
+
+                    return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'dedupe_key' => "{$id}:{$period}", 'subscriber' => $subscriber];
                 }
 
-                return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type, 'subscriber' => $subscriber];
+                // The state that counts is the one the manage view shows now.
+                return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type,
+                    'dedupe_key' => $id . ':' . (string) ($subscriber['state'] ?? '') . ':' . $last, 'subscriber' => $subscriber];
             }
 
             return $no('NOT_FOUND');
