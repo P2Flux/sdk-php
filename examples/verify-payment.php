@@ -5,9 +5,10 @@ declare(strict_types=1);
 /**
  * Server-side verification: the only thing that may mark an order paid.
  *
- * P2Flux sends no webhooks. Completion reaches you as a browser message from the hosted checkout
- * (`p2flux.payment.completed { tx_hash, settlement_receipt }`), and a browser message is a claim,
- * not a fact. This is where the claim is checked against the chain.
+ * Completion reaches you as a browser message from the hosted checkout
+ * (`p2flux.payment.completed { tx_hash, settlement_receipt }`) - or, if you asked for one, as a
+ * webhook (handleNotification) - and either is a claim, not a fact. This is where the claim is
+ * checked against the chain.
  *
  * Run it:
  *   P2FLUX_INTENT=p2f1... P2FLUX_TX_HASH=0x... php examples/verify-payment.php

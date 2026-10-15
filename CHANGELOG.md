@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.0 - 2026-10-15
+
+### Added
+
+- **Optional webhooks** (live on the P2Flux API since 15 October 2026). Add `notify_url` (a public
+  https URL) to `createPayment()` or `createPaymentLink()` and P2Flux POSTs `payment.paid`,
+  `subscription.charged` or `subscription.updated` there, retrying for about 18 hours. Without it
+  nothing changes. The response repeats `notify_url` only when the payment or link is watched.
+  (https://p2flux.com/docs/webhooks.html)
+- `handleNotification($body, $expect)` - confirms a notification with the API before you fulfil:
+  `['reference' => ...]` for a payment, `['link_id' => ..., 'manage' => ...]` for a link. Returns
+  `confirmed`, a `dedupe_key` built from the verified payment (never the event id), and throws
+  `P2FluxException` when the answer is not final yet (answer 5xx; it is sent again).
+
 ## 0.11.1 - 2026-10-08
 
 ### Fixed
