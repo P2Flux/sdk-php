@@ -344,8 +344,14 @@ final class P2FluxClient
      * `notify_url` is optional: a public https URL P2Flux POSTs a `payment.paid` event to once the
      * payment is verified on chain. Omit it and nothing changes. Answer it with handleNotification().
      *
-     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string} $terms
-     * @return array{intent: string, reference: string, amount: string, notify_url?: string, ...}
+     * `return_url` is optional: where the hosted checkout sends the buyer after paying (https; http on
+     * the test network only), with `p2flux_reference`, `p2flux_tx` and `p2flux_status` (`paid` or
+     * `confirming`) in the query. A convenience, never proof: confirm with verifyPayment() or a webhook.
+     * The answer carries `checkout_url`, P2Flux's hosted page for this payment (absent from older APIs;
+     * a self-hosted checkout uses checkoutLink() instead).
+     *
+     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string} $terms
+     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, checkout_url?: string, ...}
      */
     public function createPayment(array $terms): array
     {
@@ -720,9 +726,11 @@ final class P2FluxClient
      * the number of charges). Optional `label` (up to 60 characters, no web addresses), `expires_at`
      * (unix seconds) and, for one-time kinds, `gas_payment_mode`. Optional `notify_url`: a webhook for
      * every payment through the link (`payment.paid`, or `subscription.charged` / `subscription.updated`).
+     * Optional `return_url`: as for createPayment() (subscriptions: `p2flux_subscription` instead of
+     * `p2flux_reference`). The answer carries `checkout_url`, the hosted page for the link.
      *
-     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string} $terms
-     * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, ...}
+     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string} $terms
+     * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, ...}
      */
     public function createPaymentLink(array $terms): array
     {

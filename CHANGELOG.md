@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.0 - 2026-10-22
+
+### Added
+
+- **Redirect checkout.** `return_url` on `createPayment()` and `createPaymentLink()`: after paying, the
+  hosted checkout sends the buyer back with `p2flux_reference`, `p2flux_tx` and `p2flux_status` in
+  the query. Every create answer now carries `checkout_url`, the hosted page to send the buyer to.
+  `resolvePayment()` and link terms report `return_url`. An older API leaves both out. Answers were
+  already passed through unchanged, so 0.12.0 code sees the new fields too; this release documents
+  them. (https://p2flux.com/docs/payments.html#return)
+
 ## 0.12.0 - 2026-10-15
 
 ### Added

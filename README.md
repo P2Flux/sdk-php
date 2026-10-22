@@ -129,6 +129,22 @@ subscriptions with `link_id` and `manage`) and checks the answer is for YOUR ord
 response has no `notify_url`, the payment is not watched (the service is at capacity): keep polling,
 exactly as without webhooks.
 
+### Redirect checkout: `return_url` and `checkout_url`
+
+Prefer sending the buyer to P2Flux's page and getting them back over opening a window? Every create
+answer carries `checkout_url` (the hosted page for that payment or link). Pass `return_url` and, after
+paying, the page shows a button back to your site and, for a payment it was not opened as a window
+for, goes back by itself (links: the button only):
+
+```php
+$payment = $p2flux->createPayment(['recipient' => $wallet, 'amount' => '25.00', 'return_url' => 'https://shop.example/order/42']);
+header('Location: ' . $payment['checkout_url']);
+// the buyer comes back to https://shop.example/order/42?p2flux_reference=0x…&p2flux_tx=0x…&p2flux_status=paid
+```
+
+The return is a convenience, never proof: confirm with `verifyPayment()` (or a webhook) before
+fulfilling. `p2flux_status=confirming` means sent, not yet deep enough - keep checking.
+
 ## Pay the network fee in USDC
 
 A buyer holding USDC and **no ETH** can still pay. They sign a token authorization; P2Flux submits
