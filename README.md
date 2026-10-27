@@ -145,6 +145,22 @@ header('Location: ' . $payment['checkout_url']);
 The return is a convenience, never proof: confirm with `verifyPayment()` (or a webhook) before
 fulfilling. `p2flux_status=confirming` means sent, not yet deep enough - keep checking.
 
+
+### Private payments with Hinkal: `private_payment`
+
+On Base, a payment or one-time link can also offer **"Pay privately with Hinkal"**: the buyer pays
+from their Hinkal private balance and their own wallet does not appear on chain. You receive the same
+amount, minus the same fee; the buyer pays Hinkal's fee on top. Native gas only.
+
+```php
+$payment = $p2flux->createPayment(['recipient' => $wallet, 'amount' => '25.00', 'private_payment' => 'hinkal']);
+```
+
+Such a payment cannot be refunded automatically: on chain the payer is Hinkal's contract. A buyer can
+pay any payment through Hinkal's own app, with or without this option, so check every verification:
+`$verdict['accounting']['refundable'] === false` (and `screening` `unknown`) means refund it by hand,
+to an address the buyer gives you. [Private payments](https://p2flux.com/docs/payments.html#private)
+
 ## Pay the network fee in USDC
 
 A buyer holding USDC and **no ETH** can still pay. They sign a token authorization; P2Flux submits

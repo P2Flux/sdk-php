@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.0 - 2026-10-27
+
+### Added
+
+- **Private payments with Hinkal** (live on the P2Flux API since 26 October 2026).
+  `'private_payment' => 'hinkal'` on `createPayment()` and one-time `createPaymentLink()` adds "Pay
+  privately with Hinkal" to the hosted checkout; the answer, `resolvePayment()` and link terms carry
+  `private_payment`. A verification's `accounting.refundable` is `false` for a payment made through a
+  privacy service (refund it by hand); link payments in the manage view carry `refundable` and
+  `screening`. Requests and answers were already passed through unchanged, so 0.13.0 code can use it
+  too; this release documents it. (https://p2flux.com/docs/payments.html#private)
+
 ## 0.13.0 - 2026-10-22
 
 ### Added

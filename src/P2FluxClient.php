@@ -350,8 +350,13 @@ final class P2FluxClient
      * The answer carries `checkout_url`, P2Flux's hosted page for this payment (absent from older APIs;
      * a self-hosted checkout uses checkoutLink() instead).
      *
-     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string} $terms
-     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, checkout_url?: string, ...}
+     * `private_payment` is optional, Base only: `'hinkal'` also offers the buyer "Pay privately with
+     * Hinkal" on the hosted checkout (paid from their Hinkal private balance; native gas only). You
+     * receive the same amount and fee; such a payment cannot be refunded automatically - its
+     * verification says `accounting.refundable === false`.
+     *
+     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal'} $terms
+     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, ...}
      */
     public function createPayment(array $terms): array
     {
@@ -466,6 +471,7 @@ final class P2FluxClient
      *         merchant_net_units: string,
      *         buyer_total_units: string,
      *         payer: string,
+     *         refundable?: false,
      *         ...
      *     },
      *     retry_after?: int,
@@ -728,8 +734,9 @@ final class P2FluxClient
      * every payment through the link (`payment.paid`, or `subscription.charged` / `subscription.updated`).
      * Optional `return_url`: as for createPayment() (subscriptions: `p2flux_subscription` instead of
      * `p2flux_reference`). The answer carries `checkout_url`, the hosted page for the link.
+     * Optional `private_payment` (`'hinkal'`, one-time kinds): as for createPayment().
      *
-     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string} $terms
+     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string, private_payment?: 'hinkal'} $terms
      * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, ...}
      */
     public function createPaymentLink(array $terms): array
