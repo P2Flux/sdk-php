@@ -734,7 +734,7 @@ final class P2FluxClient
      * every payment through the link (`payment.paid`, or `subscription.charged` / `subscription.updated`).
      * Optional `return_url`: as for createPayment() (subscriptions: `p2flux_subscription` instead of
      * `p2flux_reference`). The answer carries `checkout_url`, the hosted page for the link.
-     * Optional `private_payment` (`'hinkal'`, one-time kinds): as for createPayment().
+     * Optional `private_payment` (`'hinkal'`, `once` and `reusable` links, not subscriptions): as for createPayment().
      *
      * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string, private_payment?: 'hinkal'} $terms
      * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, ...}
