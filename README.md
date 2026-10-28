@@ -172,6 +172,13 @@ back to a payer after their payment and no larger than it. The payment may be up
 before `from`: a September payment refunded in October shows on the October statement as the refund
 only.
 
+`'currencies' => ['EUR', 'GBP']` adds `value_usd` (USDC booked as USD 1:1), `value_eur`, `value_gbp`
+(the row's `net`, 2 decimals) and `rate_date` at the ECB euro reference rate of the row's day (a weekend
+or holiday takes the last published day). The rates come from the API's `/v1/rates` (`api_url`, default
+production; only dates are sent) - also as `$client->rates(['from' => ..., 'to' => ...])`. The generic
+CSV gets the extra columns; Xero and QuickBooks keep their layout (amount in USD) and name EUR/GBP in the
+description.
+
 ### Redirect checkout: `return_url` and `checkout_url`
 
 Prefer sending the buyer to P2Flux's page and getting them back over opening a window? Every create

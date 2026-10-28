@@ -169,6 +169,57 @@ try {
 }
 check('an RPC that keeps failing is an error, not a short statement', $threw);
 
+// --- currencies: USD 1:1, EUR and GBP at the ECB rate of the row's day, from the API's /v1/rates ----
+$asked = [];
+$withRates = static function (callable $rpc) use (&$asked): callable {
+    return static function (string $url, array $payload, int $timeout) use ($rpc, &$asked): array {
+        if (!str_ends_with($url, '/v1/rates')) {
+            return $rpc($url, $payload, $timeout);
+        }
+        $asked[] = $payload;
+        $rates = [];
+        for ($d = strtotime($payload['from'] . 'T00:00:00Z'); $d <= strtotime($payload['to'] . 'T00:00:00Z'); $d += 86400) {
+            $rates[gmdate('Y-m-d', $d)] = ['USD' => 1.0799, 'GBP' => 0.83728, 'rate_date' => gmdate('Y-m-d', $d)];
+        }
+
+        return [200, ['source' => 'ECB', 'base' => 'EUR', 'fetched_at' => 1, 'rates' => $rates]];
+    };
+};
+$FIXTURE = json_decode((string) file_get_contents(__DIR__ . '/fixtures/statement-currencies.json'), true);
+$rows = $run(['currencies' => ['EUR', 'GBP'], 'api_url' => 'https://api.p2flux.example', 'transport' => $withRates($stub),
+    'intents' => [$intent(['v' => 1, 'reference' => $REF1, 'mr' => 'INV-1042'])]]);
+check('currencies: one rates call over the rows\' days', count($asked) === 1 && $asked[0] === ['from' => substr($rows[0]['date'], 0, 10), 'to' => substr(end($rows)['date'], 0, 10)], json_encode($asked));
+check('currencies: value_usd 1:1, EUR and GBP of net, half away from zero', array_map(static fn (array $r): array => [$r['net'], $r['value_usd'], $r['value_eur'], $r['value_gbp']], $rows) === [
+    ['9.900000', '9.90', '9.17', '7.68'], ['12.275000', '12.28', '11.37', '9.52'], ['4.900000', '4.90', '4.54', '3.80'], ['-1.000000', '-1.00', '-0.93', '-0.78'],
+], json_encode($rows));
+check('currencies: generic CSV is byte-identical to the JS SDK', Statement::toCsv($rows) === $FIXTURE['generic']);
+check('currencies: xero CSV is byte-identical to the JS SDK', Statement::toCsv($rows, 'xero') === $FIXTURE['xero']);
+check('currencies: quickbooks CSV is byte-identical to the JS SDK', Statement::toCsv($rows, 'quickbooks') === $FIXTURE['quickbooks']);
+$gbp = $run(['currencies' => ['GBP'], 'transport' => $withRates($stub)]);
+check('GBP only: value_usd, value_gbp, rate_date', array_slice(array_keys($gbp[0]), -4) === ['net', 'value_usd', 'value_gbp', 'rate_date']);
+$asked = [];
+$plain = $run(['transport' => $withRates($stub)]);
+check('no currencies: no rates call, no new keys', $asked === [] && !isset($plain[0]['value_usd']));
+foreach ([
+    'a day without a rate' => static fn (string $u, array $p, int $t): array => str_ends_with($u, '/v1/rates') ? [200, ['rates' => []]] : $stub($u, $p, $t),
+    'rates unavailable' => static fn (string $u, array $p, int $t): array => str_ends_with($u, '/v1/rates') ? [503, ['error' => 'RATES_UNAVAILABLE']] : $stub($u, $p, $t),
+] as $label => $transport) {
+    $threw = false;
+    try {
+        $run(['currencies' => ['EUR'], 'transport' => $transport]);
+    } catch (RuntimeException) {
+        $threw = true;
+    }
+    check("{$label} is an error", $threw);
+}
+$threw = false;
+try {
+    $run(['currencies' => ['JPY']]);
+} catch (InvalidArgumentException) {
+    $threw = true;
+}
+check('an unknown currency is refused', $threw);
+
 // --- CSV: same bytes as the JS SDK ------------------------------------------------------------
 $ROWS = [
     ['date' => '2026-10-01T12:00:00.000Z', 'tx_hash' => $hash('1'), 'kind' => 'payment', 'payer' => $P1, 'reference' => $REF1, 'merchant_ref' => '-INV,"1"', 'gross' => '10.000000', 'p2flux_fee' => '0.100000', 'network_fee' => '0.000000', 'net' => '9.900000'],

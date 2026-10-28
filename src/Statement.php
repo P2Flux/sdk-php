@@ -21,6 +21,10 @@ namespace P2Flux;
  *
  * Row keys: date (ISO 8601 UTC), tx_hash, kind (payment|subscription|refund?), payer, reference,
  * merchant_ref, gross, p2flux_fee, network_fee (merchant-funded), net (what reached the wallet).
+ *
+ * currencies ['EUR', 'GBP'] adds value_usd (net, USDC booked as USD 1:1), value_eur, value_gbp (2
+ * decimals) and rate_date: the ECB euro reference rate of the row's day (UTC), the last published day
+ * before a weekend or holiday. Rates from the P2Flux API's /v1/rates (api_url); only dates are sent.
  */
 final class Statement
 {
@@ -68,7 +72,8 @@ final class Statement
     private const LOG_SPAN = 10000; // mainnet.base.org serves 10,000 blocks per eth_getLogs
     private const BATCH = 20;
     private const COLUMNS = ['date', 'tx_hash', 'kind', 'payer', 'reference', 'merchant_ref', 'gross', 'p2flux_fee', 'network_fee', 'net'];
-    private const AMOUNTS = ['gross', 'p2flux_fee', 'network_fee', 'net'];
+    private const VALUE_COLUMNS = ['value_usd', 'value_eur', 'value_gbp', 'rate_date'];
+    private const AMOUNTS = ['gross', 'p2flux_fee', 'network_fee', 'net', 'value_usd', 'value_eur', 'value_gbp'];
 
     /** @var callable(string, array<int|string, mixed>, int): array{0: int, 1: array<int|string, mixed>} */
     private $transport;
@@ -82,11 +87,13 @@ final class Statement
     /**
      * The statement rows for a wallet between two times, oldest first.
      *
-     * @param array{wallet: string, from: int|\DateTimeInterface, to: int|\DateTimeInterface, network?: 'base'|'base-sepolia', rpc_urls?: list<string>, intents?: list<string>, lookback_days?: int, transport?: callable, timeout?: int} $options
+     * @param array{wallet: string, from: int|\DateTimeInterface, to: int|\DateTimeInterface, network?: 'base'|'base-sepolia', rpc_urls?: list<string>, intents?: list<string>, lookback_days?: int, currencies?: list<'EUR'|'GBP'>, api_url?: string, transport?: callable, timeout?: int} $options
      *        from/to are inclusive (unix seconds or a DateTime). network defaults to 'base'; rpc_urls to
      *        its public keyless endpoints, tried in order. intents (from createPayment) fill merchant_ref.
      *        lookback_days (default 90, 0 = only the window): how far before `from` to look for the payment
      *        a refund in the window returns; read only when the wallet sent USDC in the window, never rows.
+     *        currencies (default none) adds value_usd/value_eur/value_gbp and rate_date, rates from
+     *        api_url (default https://api.p2flux.com) /v1/rates.
      *        transport has the client's signature: (url, payload, timeout) => [httpStatus, decodedBody].
      * @return list<array{date: string, tx_hash: string, kind: string, payer: string, reference: string, merchant_ref: string, gross: string, p2flux_fee: string, network_fee: string, net: string}>
      */
@@ -110,9 +117,85 @@ final class Statement
         if (!is_int($lookbackDays) || $lookbackDays < 0) {
             throw new \InvalidArgumentException('lookback_days must be a whole number of days, 0 or more');
         }
+        $currencies = $options['currencies'] ?? [];
+        if (!is_array($currencies) || array_diff($currencies, ['EUR', 'GBP']) !== []) {
+            throw new \InvalidArgumentException("currencies may name 'EUR' and 'GBP'");
+        }
         $self = new self($options['rpc_urls'] ?? $net['rpc_urls'], $options['transport'] ?? null, $options['timeout'] ?? 60);
+        $rows = $self->rows($net, strtolower($wallet), $fromTs, $toTs, $lookbackDays, self::merchantRefs($options['intents'] ?? []));
 
-        return $self->rows($net, strtolower($wallet), $fromTs, $toTs, $lookbackDays, self::merchantRefs($options['intents'] ?? []));
+        return $currencies === [] ? $rows : $self->withValues($rows, $currencies, rtrim($options['api_url'] ?? 'https://api.p2flux.com', '/'));
+    }
+
+    /**
+     * The rows with value_usd/eur/gbp and rate_date, rates from the API in chunks of at most 366 days.
+     * Same integers and rounding (half away from zero) as the JS SDK, so the CSV bytes match.
+     *
+     * @param list<array<string, string>> $rows
+     * @param list<string> $currencies
+     * @return list<array<string, string>>
+     */
+    private function withValues(array $rows, array $currencies, string $apiUrl): array
+    {
+        if ($rows === []) {
+            return $rows;
+        }
+        $days = [];
+        $first = strtotime(substr($rows[0]['date'], 0, 10) . 'T00:00:00Z');
+        $last = strtotime(substr($rows[count($rows) - 1]['date'], 0, 10) . 'T00:00:00Z');
+        for ($a = $first; $a <= $last; $a += 366 * 86400) {
+            $range = ['from' => gmdate('Y-m-d', $a), 'to' => gmdate('Y-m-d', min($last, $a + 365 * 86400))];
+            [$status, $body] = ($this->transport)($apiUrl . '/v1/rates', $range, $this->timeout);
+            if ($status >= 400 || !is_array($body['rates'] ?? null)) {
+                throw new \RuntimeException('P2Flux /v1/rates: ' . (string) ($body['error'] ?? "HTTP {$status}"));
+            }
+            $days = $body['rates'] + $days;
+        }
+        $rate5 = static function (mixed $r): int {
+            if (!is_int($r) && !is_float($r) || $r <= 0) {
+                throw new \RuntimeException('P2Flux /v1/rates: not a rate');
+            }
+
+            return (int) round($r * 100000);
+        };
+
+        return array_map(static function (array $r) use ($days, $currencies, $rate5): array {
+            $day = $days[substr($r['date'], 0, 10)] ?? null;
+            if (!is_array($day)) {
+                throw new \RuntimeException('no ECB rate for ' . substr($r['date'], 0, 10));
+            }
+            $usd = $rate5($day['USD'] ?? null);
+            $units = (int) str_replace('.', '', $r['net']);
+            $r['value_usd'] = self::cents(self::roundDiv($units, 10000));
+            if (in_array('EUR', $currencies, true)) {
+                $r['value_eur'] = self::cents(self::roundDiv($units * 100000, $usd * 10000));
+            }
+            if (in_array('GBP', $currencies, true)) {
+                $r['value_gbp'] = self::cents(self::roundDiv($units * $rate5($day['GBP'] ?? null), $usd * 10000));
+            }
+            $r['rate_date'] = (string) $day['rate_date'];
+
+            return $r;
+        }, $rows);
+    }
+
+    /** n / d rounded half away from zero; d > 0. */
+    private static function roundDiv(int $n, int $d): int
+    {
+        // ponytail: native ints - exact up to ~46M USDC in one row (2*|n| < PHP_INT_MAX); refuse beyond rather than round wrong.
+        if (abs($n) > intdiv(PHP_INT_MAX, 2) - $d) {
+            throw new \RuntimeException('amount too large for a currency value');
+        }
+        $q = intdiv(abs($n) * 2 + $d, 2 * $d);
+
+        return $n < 0 ? -$q : $q;
+    }
+
+    private static function cents(int $c): string
+    {
+        $a = str_pad((string) abs($c), 3, '0', STR_PAD_LEFT);
+
+        return ($c < 0 ? '-' : '') . substr($a, 0, -2) . '.' . substr($a, -2);
     }
 
     /**
@@ -123,20 +206,26 @@ final class Statement
      *   (merchant_ref, else the on-chain reference).
      * - quickbooks: the 3-column bank upload - Date (mm/dd/yyyy), Description, Amount (net).
      *
-     * The amount booked is net, what reached the wallet; gross and fees are in the description.
+     * The amount booked is net, what reached the wallet; gross and fees are in the description. Rows
+     * with currencies values: generic adds the value columns; xero and quickbooks keep their layout
+     * (amount in USD) and name the EUR/GBP values and the ECB day in the description.
      *
      * @param list<array<string, string>> $rows
      */
     public static function toCsv(array $rows, string $format = 'generic'): string
     {
-        $describe = static fn (array $r): string => "{$r['tx_hash']}: gross {$r['gross']}, P2Flux fee {$r['p2flux_fee']}, network fee {$r['network_fee']}";
+        $fx = static fn (array $r): string => isset($r['rate_date'])
+            ? (isset($r['value_eur']) ? ", EUR {$r['value_eur']}" : '') . (isset($r['value_gbp']) ? ", GBP {$r['value_gbp']}" : '') . " (ECB {$r['rate_date']})"
+            : '';
+        $describe = static fn (array $r): string => "{$r['tx_hash']}: gross {$r['gross']}, P2Flux fee {$r['p2flux_fee']}, network fee {$r['network_fee']}" . $fx($r);
         $date = static fn (array $r, bool $us): string => $us
             ? substr($r['date'], 5, 2) . '/' . substr($r['date'], 8, 2) . '/' . substr($r['date'], 0, 4)
             : substr($r['date'], 8, 2) . '/' . substr($r['date'], 5, 2) . '/' . substr($r['date'], 0, 4);
         if ($format === 'generic') {
-            $lines = [implode(',', self::COLUMNS)];
+            $columns = [...self::COLUMNS, ...array_values(array_filter(self::VALUE_COLUMNS, static fn (string $c): bool => isset($rows[0][$c])))];
+            $lines = [implode(',', $columns)];
             foreach ($rows as $r) {
-                $lines[] = implode(',', array_map(static fn (string $c): string => self::cell($r[$c], !in_array($c, self::AMOUNTS, true)), self::COLUMNS));
+                $lines[] = implode(',', array_map(static fn (string $c): string => self::cell($r[$c] ?? '', !in_array($c, self::AMOUNTS, true)), $columns));
             }
         } elseif ($format === 'xero') {
             $lines = ['Date,Amount,Payee,Description,Reference'];
