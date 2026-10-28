@@ -162,6 +162,9 @@ final class P2FluxClient
     private ?array $signingKeys = null;
     private int $signingKeysAt = 0;
 
+    /** @var array<string, string> p2flux-merchant-token / p2flux-partner-key, when given. */
+    private array $limitHeaders = [];
+
     /**
      * @param array{apiUrl: string, timeout?: int, transport?: callable, checkoutUrl?: string} $options
      *        timeout defaults to 60 s: a charge waits for on-chain confirmation, which on a busy
@@ -178,6 +181,11 @@ final class P2FluxClient
      *        hosted checkout for the API you use (api.p2flux.com -> https://pay.p2flux.com,
      *        api-test.p2flux.com -> https://pay-test.p2flux.com). Set it when you host the checkout
      *        yourself, e.g. https://pay.yourcompany.com or https://yourcompany.com/pay.
+     *
+     *        merchantToken (from createMerchantToken()) is sent as the p2flux-merchant-token header:
+     *        requests paying that token's wallet are rate limited per wallet (higher) instead of per IP.
+     *        partnerKey (confirmed partners, `<kid>.<secret>`) is sent as p2flux-partner-key. With
+     *        either set, a custom transport receives the headers as a fourth argument.
      */
     public function __construct(array $options)
     {
@@ -194,6 +202,41 @@ final class P2FluxClient
          * stop this client from creating, verifying or charging payments. Empty means not set. */
         $checkoutUrl = $options['checkoutUrl'] ?? null;
         $this->checkoutUrl = is_string($checkoutUrl) && trim($checkoutUrl) !== '' ? trim($checkoutUrl) : null;
+        foreach (['merchantToken' => 'p2flux-merchant-token', 'partnerKey' => 'p2flux-partner-key'] as $option => $header) {
+            if (isset($options[$option]) && is_string($options[$option]) && $options[$option] !== '') {
+                $this->limitHeaders[$header] = $options[$option];
+            }
+        }
+    }
+
+    /**
+     * The exact text a receiving wallet signs (personal_sign) for createMerchantToken(). $chainId is the
+     * API's network (capabilities()['chain_id']); $issuedAt unix seconds, at most 5 minutes old when sent.
+     */
+    public static function merchantTokenMessage(int $chainId, string $wallet, int $issuedAt): string
+    {
+        return "P2Flux merchant token\n\nThis signature only raises your P2Flux API limits. It moves no funds and approves nothing.\n\n"
+            . 'Wallet: ' . strtolower($wallet) . "\nChain ID: " . $chainId . "\nIssued at: " . $issuedAt;
+    }
+
+    /**
+     * Prove your receiving wallet once for higher limits: sign merchantTokenMessage() with that wallet
+     * (a Safe works too) and pass the returned merchant_token as the merchantToken option. Valid 30
+     * days; it moves no money and opens no data.
+     *
+     * @param array{wallet: string, signature: string, issued_at: int} $proof
+     * @return array{merchant_token: string, wallet: string, expires_at: int}
+     */
+    public function createMerchantToken(array $proof): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/merchant-token', [
+            'wallet' => (string) ($proof['wallet'] ?? ''),
+            'signature' => (string) ($proof['signature'] ?? ''),
+            'issued_at' => (int) ($proof['issued_at'] ?? 0),
+        ]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
     }
 
     /**
@@ -1224,7 +1267,10 @@ final class P2FluxClient
     private function post(string $path, array $payload): array
     {
         if ($this->transport !== null) {
-            [$httpStatus, $body] = ($this->transport)($this->apiUrl . $path, $payload, $this->timeout);
+            /* Old transports take three arguments; the headers are passed only when there are some. */
+            [$httpStatus, $body] = $this->limitHeaders === []
+                ? ($this->transport)($this->apiUrl . $path, $payload, $this->timeout)
+                : ($this->transport)($this->apiUrl . $path, $payload, $this->timeout, $this->limitHeaders);
 
             return [(int) $httpStatus, is_array($body) ? $body : []];
         }
@@ -1237,7 +1283,7 @@ final class P2FluxClient
             );
         }
 
-        return (self::$defaultTransport ??= new CurlTransport($this->timeout))($this->apiUrl . $path, $payload, $this->timeout);
+        return (self::$defaultTransport ??= new CurlTransport($this->timeout))($this->apiUrl . $path, $payload, $this->timeout, $this->limitHeaders);
     }
 
 

@@ -359,6 +359,8 @@ $REQUIRED_OPERATIONS = [
     // Webhook delivery history and "retry now".
     '/v1/webhooks/deliveries',
     '/v1/webhooks/redeliver',
+    // Proof of a receiving wallet, for limits per wallet.
+    '/v1/merchant-token',
     // ECB exchange rates for statements.
     '/v1/rates',
 ];
@@ -395,6 +397,7 @@ $client->collectPaymentLink('p2lm1.x', $hash);
 $client->stopPaymentLink('p2lm1.x', $hash);
 $client->webhookDeliveries(['intent' => 'p2f1.x']);
 $client->redeliverWebhook(['manage' => 'p2lm1.x'], 'evt_1');
+$client->createMerchantToken(['wallet' => '0x' . str_repeat('33', 20), 'signature' => '0x00', 'issued_at' => 1]);
 $client->rates(['from' => '2026-10-01', 'to' => '2026-10-31']);
 check('rates sends the range', end($stub->calls)['payload'] === ['from' => '2026-10-01', 'to' => '2026-10-31']);
 
@@ -423,6 +426,27 @@ check('webhookDeliveries posts the intent', end($stub->calls)['payload'] === ['i
 check('and returns the attempts', $history['events'][0]['attempts'][0]['status'] === 0);
 $client->redeliverWebhook(['manage' => 'p2lm1.x'], 'evt_1');
 check('redeliverWebhook names the event', end($stub->calls)['payload'] === ['manage' => 'p2lm1.x', 'event_id' => 'evt_1'] && str_ends_with(end($stub->calls)['url'], '/v1/webhooks/redeliver'));
+
+// --- higher limits: merchant token and partner key ------------------------------------------
+
+check('merchantTokenMessage is the exact text the API verifies (same as sdk-js and core)',
+    P2FluxClient::merchantTokenMessage(8453, '0xAbCdEf0000000000000000000000000000000001', 1800000000)
+    === "P2Flux merchant token\n\nThis signature only raises your P2Flux API limits. It moves no funds and approves nothing.\n\n"
+    . "Wallet: 0xabcdef0000000000000000000000000000000001\nChain ID: 8453\nIssued at: 1800000000");
+$stub = new StubTransport(['' => [200, ['merchant_token' => 'p2m1.k1.x.y', 'wallet' => '0xabc', 'expires_at' => 99]]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$minted = $client->createMerchantToken(['wallet' => '0xabc', 'signature' => '0x01', 'issued_at' => 5]);
+check('createMerchantToken posts the proof', $stub->calls[0]['payload'] === ['wallet' => '0xabc', 'signature' => '0x01', 'issued_at' => 5]
+    && str_ends_with($stub->calls[0]['url'], '/v1/merchant-token') && $minted['merchant_token'] === 'p2m1.k1.x.y');
+check('without the options an old three-argument transport is called as before', !array_key_exists('headers', $stub->calls[0]));
+$seenHeaders = null;
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'merchantToken' => 'p2m1.k1.x.y', 'partnerKey' => 'acme.s',
+    'transport' => static function (string $url, array $payload, int $timeout, array $headers = []) use (&$seenHeaders): array {
+        $seenHeaders = $headers;
+        return [200, []];
+    }]);
+$client->createPayment(['recipient' => '0x' . str_repeat('33', 20), 'amount' => '1.00']);
+check('merchantToken / partnerKey reach the transport as headers', $seenHeaders === ['p2flux-merchant-token' => 'p2m1.k1.x.y', 'p2flux-partner-key' => 'acme.s']);
 
 // --- webhooks: a notification is confirmed only by asking the API again ---------------------
 

@@ -24,6 +24,10 @@
 - **Statement currencies**: `'currencies' => ['EUR', 'GBP']` (and `api_url`) adds `value_usd` (USDC
   1:1), `value_eur`, `value_gbp` and `rate_date`; generic CSV adds the columns, Xero/QuickBooks name them
   in the description. Same bytes as the JS SDK.
+- **Higher limits**: `createMerchantToken(['wallet', 'signature', 'issued_at'])` and
+  `P2FluxClient::merchantTokenMessage($chainId, $wallet, $issuedAt)`; options `merchantToken` and
+  `partnerKey` send the `p2flux-merchant-token` / `p2flux-partner-key` headers (a custom transport gets
+  them as a fourth argument, only when set).
 
 All additive; needs an API with these features (an older one refuses `merchant_ref`).
 

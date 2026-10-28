@@ -20,16 +20,20 @@ final class CurlTransport
 
     /**
      * @param array<string, mixed> $payload
+     * @param array<string, string> $headers extra request headers (merchant token, partner key)
      * @return array{0: int, 1: array<string, mixed>}
      */
-    public function __invoke(string $url, array $payload, int $timeout): array
+    public function __invoke(string $url, array $payload, int $timeout, array $headers = []): array
     {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($payload === [] ? new \stdClass() : $payload, JSON_THROW_ON_ERROR),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_HTTPHEADER => array_merge(
+                ['Content-Type: application/json'],
+                array_map(static fn (string $k, string $v): string => $k . ': ' . str_replace(["\r", "\n"], '', $v), array_keys($headers), $headers)
+            ),
             CURLOPT_TIMEOUT => $timeout,
             /* A black-holed host must fail in seconds, not hold a renewal worker for the full
              * request timeout: connecting is never the slow part of a charge - confirmation is. */

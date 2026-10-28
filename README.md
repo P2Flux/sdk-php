@@ -196,6 +196,15 @@ The return is a convenience, never proof: confirm with `verifyPayment()` (or a w
 fulfilling. `p2flux_status=confirming` means sent, not yet deep enough - keep checking.
 
 
+### Higher limits: `merchantToken`
+
+Many shops behind one server address share its per-IP limits. Prove your receiving wallet once and
+requests paying that wallet are counted per wallet instead (higher, still bounded): sign
+`P2FluxClient::merchantTokenMessage($chainId, $wallet, $issuedAt)` with that wallet (`personal_sign`; a
+Safe works too), exchange it with `createMerchantToken(['wallet' => ..., 'signature' => ..., 'issued_at'
+=> ...])`, and pass the returned `merchant_token` as the `merchantToken` option. The token lasts 30
+days, moves no money and opens no data. Confirmed partners pass `partnerKey` instead.
+
 ### Private payments with Hinkal: `private_payment`
 
 On Base, a payment or a `once` / `reusable` link (not a subscription) can also offer **"Pay privately with Hinkal"**: the buyer pays
