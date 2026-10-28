@@ -262,9 +262,12 @@ final class P2FluxClient
     /**
      * Does this on-chain `$reference` commit to your `$merchantRef`? True exactly when
      * reference == keccak256("p2flux.merchant_ref.v1" || salt || merchant_ref), computed here with no
-     * call to P2Flux - so you, or an auditor you hand the salt to, can prove which order a payment on
-     * chain settled. `$salt` is the `reference_salt` the payment came back with. Malformed input is
-     * false. Pure PHP (P2Flux\Keccak), no extension.
+     * call to P2Flux - so you, or an auditor you hand the salt to, can prove the payment on chain was
+     * CREATED WITH that merchant_ref. Not who created it: anyone can create a payment to any wallet with
+     * any merchant_ref. Ownership comes from your own records (the intent or reference you stored for the
+     * order) or `merchant_ref_verified` (the creator proved control of the receiving wallet). `$salt` is
+     * the `reference_salt` the payment came back with. Malformed input is false. Pure PHP
+     * (P2Flux\Keccak), no extension.
      */
     public static function checkMerchantRef(string $reference, string $salt, string $merchantRef): bool
     {
@@ -432,7 +435,7 @@ final class P2FluxClient
      * setup and echoed by resolveSubscription() and status(). Not part of any on-chain value.
      *
      * @param array{recipient: string, amount: string, period: int, end?: int, allowance?: string|array{periods: int}, merchant_ref?: string} $terms
-     * @return array{setup_token: string, salt: string, amount: string, merchant_ref?: string, ...}
+     * @return array{setup_token: string, salt: string, amount: string, merchant_ref?: string, merchant_ref_verified?: bool, ...}
      */
     public function createSubscription(array $terms): array
     {
@@ -551,7 +554,7 @@ final class P2FluxClient
      * P2FluxClient::checkMerchantRef() (no API call).
      *
      * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
-     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, merchant_ref?: string, reference_salt?: string, ...}
+     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, reference_salt?: string, ...}
      */
     public function createPayment(array $terms): array
     {
@@ -674,7 +677,7 @@ final class P2FluxClient
      *     settlement_receipt?: string,
      *     gas_payment_mode?: 'native'|'payment_token',
      *     screening?: 'clear'|'sanctioned'|'unknown',
-     *     merchant_ref?: string,
+     *     merchant_ref?: string, merchant_ref_verified?: bool,
      *     reference_salt?: string,
      *     accounting?: array{
      *         payment_units: string,
@@ -734,7 +737,7 @@ final class P2FluxClient
      *     as_of_block?: int,
      *     gas_payment_mode?: 'native'|'payment_token',
      *     accounting?: array<string, string>,
-     *     merchant_ref?: string,
+     *     merchant_ref?: string, merchant_ref_verified?: bool,
      *     reference_salt?: string,
      *     ...
      * }
@@ -958,7 +961,7 @@ final class P2FluxClient
      * link payment does not commit to it. A self-hosted checkout must be new enough to accept it.
      *
      * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
-     * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, merchant_ref?: string, ...}
+     * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, ...}
      */
     public function createPaymentLink(array $terms): array
     {
@@ -1045,10 +1048,11 @@ final class P2FluxClient
      *
      * @param string|array<string, mixed> $notification
      * @param array{reference?: string, link_id?: string, manage?: string, signature?: string, keys?: array<string, string>, tolerance_sec?: int} $expect
-     * A confirmed payment.paid for a payment created with `merchant_ref` also carries `merchant_ref` and
-     * `reference_salt`, taken from the verified answer (never from the event body).
+     * A confirmed payment.paid for a payment created with `merchant_ref` also carries `merchant_ref`,
+     * `reference_salt` and (newer APIs) `merchant_ref_verified`, taken from the verified answer (never
+     * from the event body).
      *
-     * @return array{confirmed: bool, event_id: string, type: string, dedupe_key?: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>, merchant_ref?: string, reference_salt?: string}
+     * @return array{confirmed: bool, event_id: string, type: string, dedupe_key?: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>, merchant_ref?: string, merchant_ref_verified?: bool, reference_salt?: string}
      */
     public function handleNotification(string|array $notification, array $expect): array
     {
@@ -1127,7 +1131,8 @@ final class P2FluxClient
 
             return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type,
                 'dedupe_key' => strtolower((string) $verdict['reference']) . ':' . strtolower((string) ($verdict['tx_hash'] ?? '')), 'payment' => $verdict]
-                + array_filter(['merchant_ref' => $verdict['merchant_ref'] ?? null, 'reference_salt' => $verdict['reference_salt'] ?? null], 'is_string');
+                + array_filter(['merchant_ref' => $verdict['merchant_ref'] ?? null, 'reference_salt' => $verdict['reference_salt'] ?? null], 'is_string')
+                + array_filter(['merchant_ref_verified' => $verdict['merchant_ref_verified'] ?? null], 'is_bool');
         }
 
         if ($type === 'subscription.charged' || $type === 'subscription.updated') {

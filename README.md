@@ -156,7 +156,10 @@ Pass `merchant_ref` (ASCII letters, digits and `. _ : / # -`, 1-64 characters) t
 `createPaymentLink`, `createSubscription` or `charge($ref, $merchantRef)`; it comes back on verify,
 recover, link and subscription status, refunds and confirmed notifications. It is signed, not
 encrypted - the buyer can read it - so never personal data. A payment's on-chain `reference` then
-commits to it, provable without P2Flux:
+commits to it, provable without P2Flux - proof the payment was created with that `merchant_ref`, not who
+created it (anyone can create a payment to any wallet with any `merchant_ref`). Whose order it is comes
+from your own records (the intent or reference you stored) or `merchant_ref_verified` true (the creator
+proved control of the receiving wallet with a merchant token or partner key):
 
 ```php
 $payment = $p2flux->createPayment(['recipient' => $wallet, 'amount' => '25.00', 'merchant_ref' => 'INV-1042']);
