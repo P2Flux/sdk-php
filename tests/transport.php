@@ -356,6 +356,9 @@ $REQUIRED_OPERATIONS = [
     '/v1/links/status',
     '/v1/links/collect',
     '/v1/links/stop',
+    // Webhook delivery history and "retry now".
+    '/v1/webhooks/deliveries',
+    '/v1/webhooks/redeliver',
 ];
 
 $stub = new StubTransport(['' => [200, ['status' => 'CHARGED', 'valid' => true, 'found' => true]]]);
@@ -388,6 +391,8 @@ $client->subscribePaymentLink('p2l1.x', 'p2s2.x');
 $client->paymentLinkStatus(['manage' => 'p2lm1.x']);
 $client->collectPaymentLink('p2lm1.x', $hash);
 $client->stopPaymentLink('p2lm1.x', $hash);
+$client->webhookDeliveries(['intent' => 'p2f1.x']);
+$client->redeliverWebhook(['manage' => 'p2lm1.x'], 'evt_1');
 
 $reached = array_values(array_unique(array_map(
     static fn (array $call): string => parse_url($call['url'], PHP_URL_PATH),
@@ -398,6 +403,22 @@ $expected = $REQUIRED_OPERATIONS;
 sort($expected);
 check('every public V1 merchant operation is reachable through the SDK', $reached === $expected,
     'missing: ' . implode(', ', array_diff($expected, $reached)) . ' extra: ' . implode(', ', array_diff($reached, $expected)));
+
+// --- a charge's own merchant_ref; webhook delivery history ---------------------------------
+
+$stub = new StubTransport(['' => [200, ['status' => 'CHARGED', 'merchant_ref' => 'INV-2001', 'events' => [['id' => 'evt_1', 'attempts' => [['at' => 1, 'status' => 0, 'duration_ms' => 10000]], 'next_at' => null]]]]]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$charged = $client->charge('p2s2.x', 'INV-2001');
+check('a charge sends its own merchant_ref', $stub->calls[0]['payload'] === ['subscription' => 'p2s2.x', 'merchant_ref' => 'INV-2001']);
+check('and reads it back', $charged->merchantRef === 'INV-2001');
+$client->charge('p2s2.x');
+check('without it the request is unchanged', end($stub->calls)['payload'] === ['subscription' => 'p2s2.x']);
+check('recoverCharge echoes it', ($client->recoverCharge('p2s2.x', 3)['merchant_ref'] ?? null) === 'INV-2001');
+$history = $client->webhookDeliveries(['intent' => 'p2f1.x']);
+check('webhookDeliveries posts the intent', end($stub->calls)['payload'] === ['intent' => 'p2f1.x'] && str_ends_with(end($stub->calls)['url'], '/v1/webhooks/deliveries'));
+check('and returns the attempts', $history['events'][0]['attempts'][0]['status'] === 0);
+$client->redeliverWebhook(['manage' => 'p2lm1.x'], 'evt_1');
+check('redeliverWebhook names the event', end($stub->calls)['payload'] === ['manage' => 'p2lm1.x', 'event_id' => 'evt_1'] && str_ends_with(end($stub->calls)['url'], '/v1/webhooks/redeliver'));
 
 // --- webhooks: a notification is confirmed only by asking the API again ---------------------
 

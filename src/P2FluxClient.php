@@ -816,11 +816,14 @@ final class P2FluxClient
      *
      * Safe to retry: the contract allows one charge per billing period, so a repeat call after a
      * timeout or a crashed worker returns ALREADY_CHARGED instead of charging again.
+     *
+     * `$merchantRef`: this charge's own invoice number (rules as for createPayment()'s merchant_ref),
+     * echoed as $result->merchantRef and by recoverCharge(). Needs an API with merchant_ref.
      */
-    public function charge(string $subscriptionRef): ChargeResult
+    public function charge(string $subscriptionRef, ?string $merchantRef = null): ChargeResult
     {
         try {
-            [, $body] = $this->post('/v1/charges', ['subscription' => $subscriptionRef]);
+            [, $body] = $this->post('/v1/charges', ['subscription' => $subscriptionRef] + ($merchantRef === null ? [] : ['merchant_ref' => $merchantRef]));
         } catch (P2FluxException $e) {
             /* The exception's raw body rides along (curl's `detail`, for one), because the place an
              * operator most needs to know WHY the API was unreachable is their renewal job's log -
@@ -1117,6 +1120,37 @@ final class P2FluxClient
     public function prepareSubscriptionCancellation(string $subscriptionRef): array
     {
         [$httpStatus, $body] = $this->post('/v1/subscriptions/revoke/prepare', ['subscription' => $subscriptionRef]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * What P2Flux did with the webhooks of one payment (`['intent' => ...]`) or one payment link
+     * (`['manage' => ...]`): every event, every attempt's time, HTTP status (0 = no answer) and
+     * duration, and when the next try is due. Kept 7 days; no bodies, no URLs.
+     *
+     * @param array{intent?: string, manage?: string} $token
+     * @return array{events: list<array{id: string, type: string, created_at: int, attempts: list<array{at: int, status: int, duration_ms: int}>, next_at: int|null, outcome: string}>, ...}
+     */
+    public function webhookDeliveries(array $token): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/webhooks/deliveries', $token);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * "Retry now" for one webhook event that is still pending (see webhookDeliveries()): P2Flux sends
+     * it at once instead of at its next scheduled try. At most 3 times per event per hour.
+     *
+     * @param array{intent?: string, manage?: string} $token
+     * @return array<string, mixed>
+     */
+    public function redeliverWebhook(array $token, string $eventId): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/webhooks/redeliver', $token + ['event_id' => $eventId]);
         $this->throwIfError($httpStatus, $body);
 
         return $body;
