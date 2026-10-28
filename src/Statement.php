@@ -168,15 +168,26 @@ final class Statement
             $units = (int) str_replace('.', '', $r['net']);
             $r['value_usd'] = self::cents(self::roundDiv($units, 10000));
             if (in_array('EUR', $currencies, true)) {
-                $r['value_eur'] = self::cents(self::roundDiv($units * 100000, $usd * 10000));
+                $r['value_eur'] = self::cents(self::roundDiv(self::mul($units, 100000), $usd * 10000));
             }
             if (in_array('GBP', $currencies, true)) {
-                $r['value_gbp'] = self::cents(self::roundDiv($units * $rate5($day['GBP'] ?? null), $usd * 10000));
+                $r['value_gbp'] = self::cents(self::roundDiv(self::mul($units, $rate5($day['GBP'] ?? null)), $usd * 10000));
             }
             $r['rate_date'] = (string) $day['rate_date'];
 
             return $r;
         }, $rows);
+    }
+
+    /** a * b, or a RuntimeException when it would overflow PHP's int (it turns into a float). */
+    private static function mul(int $a, int $b): int
+    {
+        $p = $a * $b;
+        if (!is_int($p)) {
+            throw new \RuntimeException('amount too large for a currency value');
+        }
+
+        return $p;
     }
 
     /** n / d rounded half away from zero; d > 0. */

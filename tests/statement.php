@@ -90,6 +90,8 @@ $LOGS = [
     $transfer($addr('7'), $addr('8'), 10000000, 46441200, $hash('f')),
     $transfer($addr('7'), $addr('8'), 10000000, 46441300, $hash('0')),
     $transfer($addr('7'), $addr('8'), 1000000, 46441400, '0x' . str_repeat('ab', 32)),
+    // A huge row (2^59 units, ~576 billion USDC) for wallet addr 6: beyond the currency math's native ints.
+    $log($net['sponsored_splitter'], [$T['sponsored_paid'], $hash('9'), $topic($addr('6')), $topic($addr('d'))], $data(1 << 59, 0, 0, 0), 46440300, $hash('9')),
 ];
 $RECEIPTS = [$hash('9') => ['from' => $P4, 'logs' => [$transfer($P4, $WALLET, 19800000, $BS, $hash('9'), 1)]], $hash('1') => ['from' => $addr('5'), 'logs' => [$transfer($P1, $WALLET, 9900000, $B1, $hash('1'), 1), $transfer($P1, $addr('f'), 100000, $B1, $hash('1'), 2)]]];
 
@@ -213,6 +215,13 @@ check('currencies: value_usd 1:1, EUR and GBP of net, half away from zero', arra
 check('currencies: generic CSV is byte-identical to the JS SDK', Statement::toCsv($rows) === $FIXTURE['generic']);
 check('currencies: xero CSV is byte-identical to the JS SDK', Statement::toCsv($rows, 'xero') === $FIXTURE['xero']);
 check('currencies: quickbooks CSV is byte-identical to the JS SDK', Statement::toCsv($rows, 'quickbooks') === $FIXTURE['quickbooks']);
+$huge = null;
+try {
+    $run(['wallet' => $addr('6'), 'currencies' => ['EUR', 'GBP'], 'transport' => $withRates($stub)]);
+} catch (Throwable $e) {
+    $huge = $e;
+}
+check('a row too large for the currency math is a RuntimeException, not a TypeError', $huge instanceof RuntimeException, $huge === null ? 'no error' : get_class($huge) . ': ' . $huge->getMessage());
 $gbp = $run(['currencies' => ['GBP'], 'transport' => $withRates($stub)]);
 check('GBP only: value_usd, value_gbp, rate_date', array_slice(array_keys($gbp[0]), -4) === ['net', 'value_usd', 'value_gbp', 'rate_date']);
 $asked = [];
