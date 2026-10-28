@@ -337,8 +337,11 @@ final class P2FluxClient
      * the mode, the allowance only reaches the recurring contract, which moves nothing the signed
      * authorization does not permit.
      *
-     * @param array{recipient: string, amount: string, period: int, end?: int, allowance?: string|array{periods: int}} $terms
-     * @return array{setup_token: string, salt: string, amount: string, ...}
+     * Optional `merchant_ref` (your own number, rules as for createPayment()): carried in the signed
+     * setup and echoed by resolveSubscription() and status(). Not part of any on-chain value.
+     *
+     * @param array{recipient: string, amount: string, period: int, end?: int, allowance?: string|array{periods: int}, merchant_ref?: string} $terms
+     * @return array{setup_token: string, salt: string, amount: string, merchant_ref?: string, ...}
      */
     public function createSubscription(array $terms): array
     {
@@ -447,8 +450,17 @@ final class P2FluxClient
      * receive the same amount and fee; such a payment cannot be refunded automatically - its
      * verification says `accounting.refundable === false`.
      *
-     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal'} $terms
-     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, ...}
+     * `merchant_ref` is optional: your own order or invoice number (ASCII letters, digits and
+     * `. _ : / # -`, 1-64 characters; no spaces, no `@`). Signed, not encrypted - the buyer can read
+     * it, so never personal data. The answer carries it back with `reference_salt`, and the on-chain
+     * `reference` then equals keccak256("p2flux.merchant_ref.v1" || reference_salt || merchant_ref),
+     * so you or an auditor can prove which order a payment settled. verifyPayment(), recoverPayment(),
+     * resolvePayment(), verifyRefund() and the payment.paid webhook echo it. Needs an API with
+     * merchant_ref (an older one refuses the field). This SDK has no keccak: check the commitment with
+     * the JS SDK's checkMerchantRef() or `cast keccak` (see the docs).
+     *
+     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
+     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, merchant_ref?: string, reference_salt?: string, ...}
      */
     public function createPayment(array $terms): array
     {
@@ -555,6 +567,8 @@ final class P2FluxClient
      *     settlement_receipt?: string,
      *     gas_payment_mode?: 'native'|'payment_token',
      *     screening?: 'clear'|'sanctioned'|'unknown',
+     *     merchant_ref?: string,
+     *     reference_salt?: string,
      *     accounting?: array{
      *         payment_units: string,
      *         payment_fee_units: string,
@@ -613,6 +627,8 @@ final class P2FluxClient
      *     as_of_block?: int,
      *     gas_payment_mode?: 'native'|'payment_token',
      *     accounting?: array<string, string>,
+     *     merchant_ref?: string,
+     *     reference_salt?: string,
      *     ...
      * }
      */
@@ -827,9 +843,12 @@ final class P2FluxClient
      * Optional `return_url`: as for createPayment() (subscriptions: `p2flux_subscription` instead of
      * `p2flux_reference`). The answer carries `checkout_url`, the hosted page for the link.
      * Optional `private_payment` (`'hinkal'`, `once` and `reusable` links, not subscriptions): as for createPayment().
+     * Optional `merchant_ref` (rules as for createPayment()): carried in the signed link (the buyer can
+     * read it) and echoed by paymentLinkStatus() and the link's webhooks. The on-chain reference of a
+     * link payment does not commit to it. A self-hosted checkout must be new enough to accept it.
      *
-     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string, private_payment?: 'hinkal'} $terms
-     * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, ...}
+     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
+     * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, merchant_ref?: string, ...}
      */
     public function createPaymentLink(array $terms): array
     {
@@ -913,7 +932,10 @@ final class P2FluxClient
      *
      * @param string|array<string, mixed> $notification
      * @param array{reference?: string, link_id?: string, manage?: string, signature?: string, keys?: array<string, string>, tolerance_sec?: int} $expect
-     * @return array{confirmed: bool, event_id: string, type: string, dedupe_key?: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>}
+     * A confirmed payment.paid for a payment created with `merchant_ref` also carries `merchant_ref` and
+     * `reference_salt`, taken from the verified answer (never from the event body).
+     *
+     * @return array{confirmed: bool, event_id: string, type: string, dedupe_key?: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>, merchant_ref?: string, reference_salt?: string}
      */
     public function handleNotification(string|array $notification, array $expect): array
     {
@@ -991,7 +1013,8 @@ final class P2FluxClient
             }
 
             return ['confirmed' => true, 'event_id' => $eventId, 'type' => $type,
-                'dedupe_key' => strtolower((string) $verdict['reference']) . ':' . strtolower((string) ($verdict['tx_hash'] ?? '')), 'payment' => $verdict];
+                'dedupe_key' => strtolower((string) $verdict['reference']) . ':' . strtolower((string) ($verdict['tx_hash'] ?? '')), 'payment' => $verdict]
+                + array_filter(['merchant_ref' => $verdict['merchant_ref'] ?? null, 'reference_salt' => $verdict['reference_salt'] ?? null], 'is_string');
         }
 
         if ($type === 'subscription.charged' || $type === 'subscription.updated') {

@@ -410,6 +410,14 @@ $client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $s
 $ok = $client->handleNotification(json_encode($event), ['reference' => $ref]);
 check('handleNotification confirms through verify', $ok['confirmed'] === true && $ok['event_id'] === $event['id']);
 check('the dedupe key comes from the verified payment', $ok['dedupe_key'] === "{$ref}:0xabc");
+check('without merchant_ref the result has no such key', !array_key_exists('merchant_ref', $ok) && !array_key_exists('reference_salt', $ok));
+$salt = '0x' . str_repeat('11', 32);
+$mrStub = new StubTransport(['/v1/payments/verify' => [200, ['valid' => true, 'tx_hash' => '0xabc', 'reference' => $ref, 'merchant_ref' => 'INV-1042', 'reference_salt' => $salt]]]);
+$mr = (new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $mrStub]))->handleNotification($event, ['reference' => $ref]);
+check('a confirmed payment carries merchant_ref and reference_salt from the verdict', ($mr['merchant_ref'] ?? null) === 'INV-1042' && ($mr['reference_salt'] ?? null) === $salt);
+$mrStub = new StubTransport(['/v1/payments' => [200, ['intent' => 'p2f1.x', 'merchant_ref' => 'INV-1042']]]);
+(new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $mrStub]))->createPayment(['recipient' => '0x' . str_repeat('33', 20), 'amount' => '1.00', 'merchant_ref' => 'INV-1042']);
+check('merchant_ref is passed through on create', ($mrStub->calls[0]['payload']['merchant_ref'] ?? null) === 'INV-1042');
 check('a replay with a fresh event id has the same dedupe key', $client->handleNotification(['id' => '0x' . str_repeat('55', 32)] + $event, ['reference' => $ref])['dedupe_key'] === $ok['dedupe_key']);
 check('it verifies the intent and hash from the event', $stub->calls[0]['payload'] === ['intent' => $intent, 'tx_hash' => '0xabc']);
 $before = count($stub->calls);
