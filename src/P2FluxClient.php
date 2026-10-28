@@ -928,7 +928,8 @@ final class P2FluxClient
      * timeout or a crashed worker returns ALREADY_CHARGED instead of charging again.
      *
      * `$merchantRef`: this charge's own invoice number (rules as for createPayment()'s merchant_ref),
-     * echoed as $result->merchantRef and by recoverCharge(). Needs an API with merchant_ref.
+     * echoed as $result->merchantRef and by recoverCharge(). Needs an API with merchant_ref. Send the same merchant_ref when retrying a charge: it is echoed from the request (stateless), so a
+     * retry with another ref echoes that one.
      */
     public function charge(string $subscriptionRef, ?string $merchantRef = null): ChargeResult
     {

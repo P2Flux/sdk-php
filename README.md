@@ -154,7 +154,8 @@ each event with every attempt's time, HTTP status (0 = no answer) and duration, 
 
 Pass `merchant_ref` (ASCII letters, digits and `. _ : / # -`, 1-64 characters) to `createPayment`,
 `createPaymentLink`, `createSubscription` or `charge($ref, $merchantRef)`; it comes back on verify,
-recover, link and subscription status, refunds and confirmed notifications. It is signed, not
+recover, link and subscription status, refunds and confirmed notifications. Send the same `merchant_ref` when retrying a
+charge: a charge's ref is echoed from the request (stateless), so a retry with another ref echoes that one. It is signed, not
 encrypted - the buyer can read it - so never personal data. A payment's on-chain `reference` then
 commits to it, provable without P2Flux - proof the payment was created with that `merchant_ref`, not who
 created it (anyone can create a payment to any wallet with any `merchant_ref`). Whose order it is comes
