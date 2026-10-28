@@ -14,7 +14,8 @@
   `merchant_ref` / `reference_salt`. `P2FluxClient::checkMerchantRef($reference, $salt, $ref)` proves
   the commitment with a vendored pure-PHP Keccak-256 (`P2Flux\Keccak`).
 - **Accounting statement**: `P2Flux\Statement::statement([...])` and `Statement::toCsv($rows,
-  'generic'|'xero'|'quickbooks')`, the same rows and CSV as the JS SDK, raw JSON-RPC through the
+  'generic'|'xero'|'quickbooks')`, the same rows and CSV as the JS SDK (refunds of payments up to
+  `lookback_days` (90) before the window included), raw JSON-RPC through the
   transport.
 - **Webhook delivery history**: `webhookDeliveries(['intent' => ...] | ['manage' => ...])` and
   `redeliverWebhook($token, $eventId)`.

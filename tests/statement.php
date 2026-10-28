@@ -64,6 +64,7 @@ $WALLET = $addr('a');
 [$P1, $P2, $P3, $STRANGER] = [$addr('1'), $addr('2'), $addr('3'), $addr('9')];
 [$REF1, $REF2, $SUB] = [$hash('e'), $hash('f'), $hash('d')];
 [$B1, $B2, $B3, $B4, $B5] = [46440000, 46441000, 46442000, 46443000, 46444000];
+[$BS, $B6, $P4, $REF3] = [46300000, 46445000, $addr('4'), $hash('b')]; // "September" payment by P4, "October" refund
 $log = static fn (string $address, array $topics, string $d, int $block, string $tx, int $index = 0): array =>
     ['address' => $address, 'topics' => $topics, 'data' => $d, 'blockNumber' => '0x' . dechex($block), 'transactionHash' => $tx, 'logIndex' => '0x' . dechex($index)];
 $T = Statement::TOPICS;
@@ -77,9 +78,11 @@ $LOGS = [
     $transfer($WALLET, $P1, 1000000, $B4, $hash('4')),
     $transfer($WALLET, $STRANGER, 2000000, $B5, $hash('5')),
     $transfer($WALLET, $P2, 99000000, $B5, $hash('6'), 1),
+    $log($net['splitter'], [$T['paid'], $REF3, $topic($WALLET), $topic($net['usdc'])], $data(19800000, 200000), $BS, $hash('9'), 2),
+    $transfer($WALLET, $P4, 5000000, $B6, $hash('a')),
     $log($net['splitter'], [$T['paid'], $hash('c'), $topic($WALLET), $topic($net['usdc'])], $data(1, 0), 46000000, $hash('8')),
 ];
-$RECEIPTS = [$hash('1') => ['from' => $addr('5'), 'logs' => [$transfer($P1, $WALLET, 9900000, $B1, $hash('1'), 1), $transfer($P1, $addr('f'), 100000, $B1, $hash('1'), 2)]]];
+$RECEIPTS = [$hash('9') => ['from' => $P4, 'logs' => [$transfer($P4, $WALLET, 19800000, $BS, $hash('9'), 1)]], $hash('1') => ['from' => $addr('5'), 'logs' => [$transfer($P1, $WALLET, 9900000, $B1, $hash('1'), 1), $transfer($P1, $addr('f'), 100000, $B1, $hash('1'), 2)]]];
 
 $matches = static fn (mixed $want, ?string $got): bool => $want === null
     || (is_array($want) ? in_array(strtolower((string) $got), array_map('strtolower', $want), true) : strtolower($want) === strtolower((string) $got));
@@ -141,8 +144,15 @@ check('the window is by date', array_column($window, 'tx_hash') === [$hash('2'),
 $logCalls = array_filter($seen, static fn (array $r): bool => $r['method'] === 'eth_getLogs');
 check('no read below a deploy block, no empty range', array_filter($logCalls, static fn (array $r): bool =>
     hexdec($r['params'][0]['fromBlock']) < $net['splitter_deploy_block'] || hexdec($r['params'][0]['toBlock']) < hexdec($r['params'][0]['fromBlock'])) === []);
+check('no read below the window when the wallet sent nothing', array_filter($logCalls, static fn (array $r): bool => hexdec($r['params'][0]['fromBlock']) < $B2 - 10) === []);
+$october = ['from' => $tsOf($B6 - 1000), 'to' => $tsOf($B6 + 10)];
+$refund = $run($october + ['intents' => [$intent(['v' => 1, 'reference' => $REF3, 'mr' => 'INV-0930'])]]);
+check('September payment, October refund: the October statement shows the refund, not the payment', $refund === [
+    ['date' => $iso($B6), 'tx_hash' => $hash('a'), 'kind' => 'refund?', 'payer' => $P4, 'reference' => $REF3, 'merchant_ref' => 'INV-0930', 'gross' => '-5.000000', 'p2flux_fee' => '0.000000', 'network_fee' => '0.000000', 'net' => '-5.000000'],
+], json_encode($refund));
+check('a 1-day look-back (or none) does not reach a payment ~3.4 days back', $run($october + ['lookback_days' => 1]) === [] && $run($october + ['lookback_days' => 0]) === []);
 check('a wallet with nothing in the window is an empty list', $run(['wallet' => $addr('c')]) === []);
-foreach (['bad wallet' => ['wallet' => 'nope'], 'from after to' => ['from' => $tsOf($B2), 'to' => $tsOf($B1)], 'unknown network' => ['network' => 'mars']] as $label => $bad) {
+foreach (['bad wallet' => ['wallet' => 'nope'], 'from after to' => ['from' => $tsOf($B2), 'to' => $tsOf($B1)], 'unknown network' => ['network' => 'mars'], 'negative lookback_days' => ['lookback_days' => -1]] as $label => $bad) {
     $threw = false;
     try {
         $run($bad);

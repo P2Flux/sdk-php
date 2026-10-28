@@ -14,9 +14,10 @@ namespace P2Flux;
  * No API call, no key, no dependency: raw JSON-RPC to public endpoints (or your own), so the numbers do
  * not depend on P2Flux being up - or honest. One row per settlement to the wallet (one-time payments
  * through the splitter and the sponsored splitter, subscription charges) and per probable refund: a
- * USDC transfer from the wallet back to a payer in the statement, after their payment and no larger
- * than it (`kind` 'refund?' - a transfer cannot say why it was sent). Amounts are decimal USDC; a
- * refund is negative. `merchant_ref` is filled from the intents you pass, decoded locally.
+ * USDC transfer from the wallet back to a payer, after their payment and no larger than it (`kind`
+ * 'refund?' - a transfer cannot say why it was sent). The payment may be up to lookback_days (default
+ * 90) before `from`: a September payment refunded in October is on the October statement as a refund,
+ * without the September payment as a row. Amounts are decimal USDC; a refund is negative. `merchant_ref` is filled from the intents you pass, decoded locally.
  *
  * Row keys: date (ISO 8601 UTC), tx_hash, kind (payment|subscription|refund?), payer, reference,
  * merchant_ref, gross, p2flux_fee, network_fee (merchant-funded), net (what reached the wallet).
@@ -81,9 +82,11 @@ final class Statement
     /**
      * The statement rows for a wallet between two times, oldest first.
      *
-     * @param array{wallet: string, from: int|\DateTimeInterface, to: int|\DateTimeInterface, network?: 'base'|'base-sepolia', rpc_urls?: list<string>, intents?: list<string>, transport?: callable, timeout?: int} $options
+     * @param array{wallet: string, from: int|\DateTimeInterface, to: int|\DateTimeInterface, network?: 'base'|'base-sepolia', rpc_urls?: list<string>, intents?: list<string>, lookback_days?: int, transport?: callable, timeout?: int} $options
      *        from/to are inclusive (unix seconds or a DateTime). network defaults to 'base'; rpc_urls to
      *        its public keyless endpoints, tried in order. intents (from createPayment) fill merchant_ref.
+     *        lookback_days (default 90, 0 = only the window): how far before `from` to look for the payment
+     *        a refund in the window returns; read only when the wallet sent USDC in the window, never rows.
      *        transport has the client's signature: (url, payload, timeout) => [httpStatus, decodedBody].
      * @return list<array{date: string, tx_hash: string, kind: string, payer: string, reference: string, merchant_ref: string, gross: string, p2flux_fee: string, network_fee: string, net: string}>
      */
@@ -103,9 +106,13 @@ final class Statement
         if ($fromTs === null || $toTs === null || $fromTs > $toTs) {
             throw new \InvalidArgumentException('from must be a time before to');
         }
+        $lookbackDays = $options['lookback_days'] ?? 90;
+        if (!is_int($lookbackDays) || $lookbackDays < 0) {
+            throw new \InvalidArgumentException('lookback_days must be a whole number of days, 0 or more');
+        }
         $self = new self($options['rpc_urls'] ?? $net['rpc_urls'], $options['transport'] ?? null, $options['timeout'] ?? 60);
 
-        return $self->rows($net, strtolower($wallet), $fromTs, $toTs, self::merchantRefs($options['intents'] ?? []));
+        return $self->rows($net, strtolower($wallet), $fromTs, $toTs, $lookbackDays, self::merchantRefs($options['intents'] ?? []));
     }
 
     /**
@@ -162,19 +169,13 @@ final class Statement
      * @param array<string, string> $refs
      * @return list<array<string, string>>
      */
-    private function rows(array $net, string $wallet, int $fromTs, int $toTs, array $refs): array
+    private function rows(array $net, string $wallet, int $fromTs, int $toTs, int $lookbackDays, array $refs): array
     {
         $walletTopic = self::topicOf($wallet);
         $latest = $this->block('latest');
         // Widened by a few blocks either way; rows are then held to the dates themselves.
         $fromBlock = max(0, $this->blockNear($fromTs, $latest) - 5);
         $toBlock = min($latest['n'], $this->blockNear($toTs, $latest) + 5);
-        $scan = function (string $address, int $deployBlock, array $topics) use ($fromBlock, $toBlock): array {
-            $a = max($fromBlock, $deployBlock);
-
-            return $a > $toBlock ? [] : $this->getLogs($address, $topics, $a, $toBlock);
-        };
-
         $entries = [];
         $row = static function (array $l, string $kind, string $payer, string $reference, int $gross, int $fee, int $networkFee, int $netUnits) use ($refs): array {
             return [
@@ -195,65 +196,78 @@ final class Statement
             ];
         };
 
-        // One-time payments through the splitter: the payer is whoever's USDC reached the wallet in that transaction.
-        $paid = [];
-        foreach (array_merge([['address' => $net['splitter'], 'deploy_block' => $net['splitter_deploy_block']]], $net['retired_splitters']) as $c) {
-            array_push($paid, ...$scan($c['address'], $c['deploy_block'], [self::TOPICS['paid'], null, $walletTopic]));
-        }
-        $receipts = $this->rpc(array_map(static fn (array $l): array => ['eth_getTransactionReceipt', [$l['transactionHash']]], $paid));
-        foreach ($paid as $i => $l) {
-            [$netUnits, $fee] = self::words($l['data']) + [0, 0];
-            $payer = (string) ($receipts[$i]['from'] ?? '');
-            foreach ($receipts[$i]['logs'] ?? [] as $r) {
-                if (strtolower($r['address']) === strtolower($net['usdc']) && ($r['topics'][0] ?? '') === self::TOPICS['transfer']
-                    && self::addressOf($r['topics'][2] ?? '') === $wallet && (self::words($r['data'])[0] ?? -1) === $netUnits) {
-                    $payer = self::addressOf($r['topics'][1]);
-                    break;
-                }
+        // Payments and subscription charges to the wallet in blocks [lo, hi].
+        $settlements = function (int $lo, int $hi) use (&$entries, $row, $net, $wallet, $walletTopic): void {
+            $scan = function (string $address, int $deployBlock, array $topics) use ($lo, $hi): array {
+                $a = max($lo, $deployBlock);
+
+                return $a > $hi ? [] : $this->getLogs($address, $topics, $a, $hi);
+            };
+
+            // One-time payments through the splitter: the payer is whoever's USDC reached the wallet in that transaction.
+            $paid = [];
+            foreach (array_merge([['address' => $net['splitter'], 'deploy_block' => $net['splitter_deploy_block']]], $net['retired_splitters']) as $c) {
+                array_push($paid, ...$scan($c['address'], $c['deploy_block'], [self::TOPICS['paid'], null, $walletTopic]));
             }
-            $entries[] = $row($l, 'payment', $payer, $l['topics'][1], $netUnits + $fee, $fee, 0, $netUnits);
-        }
-
-        // Sponsored: the merchant funds the fee and the fixed network fee out of the amount; the buyer's quoted network fee is on top.
-        foreach (array_merge([['address' => $net['sponsored_splitter'], 'deploy_block' => $net['sponsored_splitter_deploy_block']]], $net['retired_sponsored_splitters']) as $c) {
-            foreach ($scan($c['address'], $c['deploy_block'], [self::TOPICS['sponsored_paid'], null, $walletTopic]) as $l) {
-                [$netUnits, $fee, , $fixed] = self::words($l['data']) + [0, 0, 0, 0];
-                $entries[] = $row($l, 'payment', self::addressOf($l['topics'][3]), $l['topics'][1], $netUnits + $fee + $fixed, $fee, $fixed, $netUnits);
-            }
-        }
-
-        // Subscription charges: net + fee + networkFee is the amount; the payer's gas reimbursement is on top.
-        foreach ($scan($net['recurring'], $net['recurring_deploy_block'], [self::TOPICS['subscription_charged'], null, null, $walletTopic]) as $l) {
-            [, $netUnits, $fee, $networkFee] = self::words($l['data']) + [0, 0, 0, 0];
-            $entries[] = $row($l, 'subscription', self::addressOf($l['topics'][2]), $l['topics'][1], $netUnits + $fee + $networkFee, $fee, $networkFee, $netUnits);
-        }
-
-        // Probable refunds: USDC from the wallet to a payer above, later than one of their payments and no larger.
-        $payers = array_values(array_unique(array_filter(
-            array_map(static fn (array $e): string => $e['row']['payer'], $entries),
-            static fn (string $p): bool => preg_match('/^0x[0-9a-f]{40}$/', $p) === 1
-        )));
-        foreach (array_chunk($payers, 100) as $chunk) {
-            $topics = [self::TOPICS['transfer'], $walletTopic, array_map([self::class, 'topicOf'], $chunk)];
-            foreach ($this->getLogs($net['usdc'], $topics, $fromBlock, $toBlock) as $l) {
-                $to = self::addressOf($l['topics'][2]);
-                $amount = self::words($l['data'])[0] ?? 0;
-                $b = hexdec($l['blockNumber']);
-                $index = hexdec($l['logIndex']);
-                $original = null;
-                foreach ($entries as $e) {
-                    if ($e['row']['kind'] !== 'refund?' && $e['row']['payer'] === $to && ($e['block'] < $b || ($e['block'] === $b && $e['index'] < $index)) && $e['gross'] >= $amount
-                        && ($original === null || [$e['block'], $e['index']] > [$original['block'], $original['index']])) {
-                        $original = $e;
+            $receipts = $this->rpc(array_map(static fn (array $l): array => ['eth_getTransactionReceipt', [$l['transactionHash']]], $paid));
+            foreach ($paid as $i => $l) {
+                [$netUnits, $fee] = self::words($l['data']) + [0, 0];
+                $payer = (string) ($receipts[$i]['from'] ?? '');
+                foreach ($receipts[$i]['logs'] ?? [] as $r) {
+                    if (strtolower($r['address']) === strtolower($net['usdc']) && ($r['topics'][0] ?? '') === self::TOPICS['transfer']
+                        && self::addressOf($r['topics'][2] ?? '') === $wallet && (self::words($r['data'])[0] ?? -1) === $netUnits) {
+                        $payer = self::addressOf($r['topics'][1]);
+                        break;
                     }
                 }
-                if ($original !== null) {
-                    $entries[] = $row($l, 'refund?', $to, $original['row']['reference'], -$amount, 0, 0, -$amount);
+                $entries[] = $row($l, 'payment', $payer, $l['topics'][1], $netUnits + $fee, $fee, 0, $netUnits);
+            }
+
+            // Sponsored: the merchant funds the fee and the fixed network fee out of the amount; the buyer's quoted network fee is on top.
+            foreach (array_merge([['address' => $net['sponsored_splitter'], 'deploy_block' => $net['sponsored_splitter_deploy_block']]], $net['retired_sponsored_splitters']) as $c) {
+                foreach ($scan($c['address'], $c['deploy_block'], [self::TOPICS['sponsored_paid'], null, $walletTopic]) as $l) {
+                    [$netUnits, $fee, , $fixed] = self::words($l['data']) + [0, 0, 0, 0];
+                    $entries[] = $row($l, 'payment', self::addressOf($l['topics'][3]), $l['topics'][1], $netUnits + $fee + $fixed, $fee, $fixed, $netUnits);
                 }
+            }
+
+            // Subscription charges: net + fee + networkFee is the amount; the payer's gas reimbursement is on top.
+            foreach ($scan($net['recurring'], $net['recurring_deploy_block'], [self::TOPICS['subscription_charged'], null, null, $walletTopic]) as $l) {
+                [, $netUnits, $fee, $networkFee] = self::words($l['data']) + [0, 0, 0, 0];
+                $entries[] = $row($l, 'subscription', self::addressOf($l['topics'][2]), $l['topics'][1], $netUnits + $fee + $networkFee, $fee, $networkFee, $netUnits);
+            }
+        };
+        $settlements($fromBlock, $toBlock);
+
+        // Probable refunds: USDC from the wallet in the window to a payer, later than one of their payments and no
+        // larger. Only when the wallet sent anything are the look-back's payments read (they match, they are not rows).
+        $sent = $this->getLogs($net['usdc'], [self::TOPICS['transfer'], $walletTopic], $fromBlock, $toBlock);
+        if ($sent !== [] && $lookbackDays > 0) {
+            $lookFrom = max(0, $this->blockNear($fromTs - $lookbackDays * 86400, $latest) - 5);
+            if ($lookFrom < $fromBlock) {
+                $settlements($lookFrom, $fromBlock - 1);
+            }
+        }
+        $settled = $entries;
+        foreach ($sent as $l) {
+            $to = self::addressOf($l['topics'][2]);
+            $amount = self::words($l['data'])[0] ?? 0;
+            $b = hexdec($l['blockNumber']);
+            $index = hexdec($l['logIndex']);
+            $original = null;
+            foreach ($settled as $e) {
+                if ($e['row']['payer'] === $to && ($e['block'] < $b || ($e['block'] === $b && $e['index'] < $index)) && $e['gross'] >= $amount
+                    && ($original === null || [$e['block'], $e['index']] > [$original['block'], $original['index']])) {
+                    $original = $e;
+                }
+            }
+            if ($original !== null) {
+                $entries[] = $row($l, 'refund?', $to, $original['row']['reference'], -$amount, 0, 0, -$amount);
             }
         }
 
-        // Dates, one batched read per distinct block.
+        // Dates, one batched read per distinct block (the look-back's payments are below the window: no rows).
+        $entries = array_values(array_filter($entries, static fn (array $e): bool => $e['block'] >= $fromBlock));
         $blocks = array_values(array_unique(array_column($entries, 'block')));
         $times = $this->rpc(array_map(static fn (int $n): array => ['eth_getBlockByNumber', ['0x' . dechex($n), false]], $blocks));
         $tsByBlock = [];

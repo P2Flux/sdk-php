@@ -168,7 +168,9 @@ file_put_contents('october.csv', P2Flux\Statement::toCsv($rows, 'xero')); // 'ge
 ```
 
 `intents` (optional, decoded locally) fill `merchant_ref`. A refund is marked `refund?`: a transfer
-back to a payer after their payment and no larger than it.
+back to a payer after their payment and no larger than it. The payment may be up to `lookback_days` (default 90)
+before `from`: a September payment refunded in October shows on the October statement as the refund
+only.
 
 ### Redirect checkout: `return_url` and `checkout_url`
 
