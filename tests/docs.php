@@ -201,7 +201,8 @@ check(
     str_contains((string) file_get_contents($root . '/README.md'), 'composer require ' . $composer['name'])
 );
 check('PSR-4 root maps the shipped namespace', ($composer['autoload']['psr-4']['P2Flux\\'] ?? '') === 'src/');
-check('no runtime dependency beyond php and ext-json', array_keys($composer['require'] ?? []) === ['php', 'ext-json']);
+// ext-sodium (bundled with PHP since 7.2) verifies signed webhooks.
+check('no runtime dependency beyond php, ext-json and ext-sodium', array_keys($composer['require'] ?? []) === ['php', 'ext-json', 'ext-sodium']);
 
 echo $failures === 0 ? "\ndocs: all checks passed\n" : "\ndocs: {$failures} FAILED\n";
 exit($failures === 0 ? 0 : 1);

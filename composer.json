@@ -24,7 +24,8 @@
   },
   "require": {
     "php": ">=8.1",
-    "ext-json": "*"
+    "ext-json": "*",
+    "ext-sodium": "*"
   },
   "suggest": {
     "ext-curl": "Only for the default transport. A host that passes its own `transport` (WordPress, Guzzle, Symfony HttpClient) never loads it."
@@ -37,6 +38,7 @@
   "scripts": {
     "test": [
       "@test:transport",
+      "@test:webhook-signature",
       "@test:checkout-link",
       "@test:paywall",
       "@test:examples",
@@ -44,6 +46,7 @@
       "@test:docs"
     ],
     "test:transport": "php tests/transport.php",
+    "test:webhook-signature": "php tests/webhook-signature.php",
     "test:checkout-link": "php tests/checkout-link.php",
     "test:examples": "php tests/examples.php",
     "test:complete-flow": "php tests/complete-flow.php",

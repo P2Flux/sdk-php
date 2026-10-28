@@ -132,6 +132,9 @@ final class P2FluxClient
          * can be created for or sent to it. Nothing was submitted in either case. */
         'PAYER_SANCTIONED' => 'STOP_SUBSCRIPTION',
         'RECIPIENT_SANCTIONED' => 'INVALID_REQUEST',
+        // Signed webhooks (verifyWebhook): not signed by P2Flux, or signed too long ago.
+        'WEBHOOK_SIGNATURE_INVALID' => 'INVALID_REQUEST',
+        'WEBHOOK_TOO_OLD' => 'INVALID_REQUEST',
     ];
 
     private string $apiUrl;
@@ -154,6 +157,10 @@ final class P2FluxClient
      * its own transport never loads the class at all, which is the point: a WordPress plugin
      * vendoring this SDK must be able to ship it without shipping a curl call. */
     private static ?CurlTransport $defaultTransport = null;
+
+    /** @var null|array<string, string> The webhook signing keys from capabilities (kid => base64url). */
+    private ?array $signingKeys = null;
+    private int $signingKeysAt = 0;
 
     /**
      * @param array{apiUrl: string, timeout?: int, transport?: callable, checkoutUrl?: string} $options
@@ -187,6 +194,91 @@ final class P2FluxClient
          * stop this client from creating, verifying or charging payments. Empty means not set. */
         $checkoutUrl = $options['checkoutUrl'] ?? null;
         $this->checkoutUrl = is_string($checkoutUrl) && trim($checkoutUrl) !== '' ? trim($checkoutUrl) : null;
+    }
+
+    /**
+     * Check a webhook's `p2flux-signature` header and return the decoded event.
+     *
+     * Pass the body EXACTLY as received (file_get_contents('php://input'), before any decoding) and
+     * the header's value ($_SERVER['HTTP_P2FLUX_SIGNATURE']). Throws P2FluxException
+     * `WEBHOOK_SIGNATURE_INVALID` (not signed by P2Flux, or changed) or `WEBHOOK_TOO_OLD` (signed more
+     * than `tolerance_sec` from now - a replay, or a clock to fix); both have action INVALID_REQUEST.
+     *
+     * A valid signature proves P2Flux sent this event, not that money moved: still decide on money
+     * with verifyPayment() (or handleNotification(), which does both).
+     *
+     * @param array{keys?: array<string, string>, tolerance_sec?: int, now?: int} $options
+     *        keys: kid => base64url public key; default the API's own, from capabilities(), fetched
+     *        once per client. tolerance_sec defaults to 300; now (unix seconds) is for tests.
+     * @return array<string, mixed>
+     */
+    public function verifyWebhook(string $rawBody, string $header, array $options = []): array
+    {
+        $parts = [];
+        foreach (explode(',', $header) as $part) {
+            $pair = explode('=', $part, 2);
+            if (count($pair) === 2) {
+                $parts[trim($pair[0])] = trim($pair[1]);
+            }
+        }
+        $t = $parts['t'] ?? '';
+        $kid = $parts['kid'] ?? '';
+        $invalid = new P2FluxException('WEBHOOK_SIGNATURE_INVALID', 'INVALID_REQUEST');
+        if (preg_match('/^\d{1,12}$/', $t) !== 1 || $kid === '' || ($parts['v1'] ?? '') === '') {
+            throw $invalid;
+        }
+        $key = isset($options['keys']) ? ($options['keys'][$kid] ?? null) : $this->signingKey($kid);
+        $publicKey = is_string($key) ? self::base64UrlDecode($key) : null;
+        $signature = self::base64UrlDecode($parts['v1']);
+        try {
+            $ok = $publicKey !== null && $signature !== null
+                && sodium_crypto_sign_verify_detached($signature, "{$t}.{$rawBody}", $publicKey);
+        } catch (\SodiumException) {
+            $ok = false;
+        }
+        if (!$ok) {
+            throw $invalid;
+        }
+        // Checked after the signature, so a stale answer is only ever given about a genuine P2Flux event.
+        if (abs(($options['now'] ?? time()) - (int) $t) > ($options['tolerance_sec'] ?? 300)) {
+            throw new P2FluxException('WEBHOOK_TOO_OLD', 'INVALID_REQUEST');
+        }
+        $event = json_decode($rawBody, true);
+        if (!is_array($event)) {
+            throw new P2FluxException('WEBHOOK_SIGNATURE_INVALID', 'INVALID_REQUEST', ['reason' => 'MALFORMED']);
+        }
+
+        return $event;
+    }
+
+    /**
+     * A webhook signing key by kid, from capabilities: fetched once, again for a kid not seen yet (a
+     * rotation) - but at most once a minute, so forged kids cannot make every check a fetch.
+     */
+    private function signingKey(string $kid): ?string
+    {
+        if ($this->signingKeys === null || (!isset($this->signingKeys[$kid]) && time() - $this->signingKeysAt > 60)) {
+            $keys = [];
+            foreach ($this->capabilities()['webhook_signing_keys'] ?? [] as $k) {
+                if (is_string($k['kid'] ?? null) && is_string($k['public_key'] ?? null)) {
+                    $keys[$k['kid']] = $k['public_key'];
+                }
+            }
+            $this->signingKeys = $keys;
+            $this->signingKeysAt = time();
+        }
+
+        return $this->signingKeys[$kid] ?? null;
+    }
+
+    private static function base64UrlDecode(string $value): ?string
+    {
+        if (preg_match('/^[A-Za-z0-9_-]+$/', $value) !== 1) {
+            return null;
+        }
+        $bytes = base64_decode(strtr($value, '-_', '+/'), true);
+
+        return $bytes === false ? null : $bytes;
     }
 
     /**
@@ -815,8 +907,12 @@ final class P2FluxClient
      * does not even name your order the API is not asked. InvalidArgumentException on a missing or
      * malformed `$expect`.
      *
+     * Optional `signature`: the `p2flux-signature` header. Given, the raw body (a string) is checked
+     * first (verifyWebhook(), with `keys` / `tolerance_sec` as there) and a bad or stale one returns
+     * `confirmed => false` with reason WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TOO_OLD.
+     *
      * @param string|array<string, mixed> $notification
-     * @param array{reference?: string, link_id?: string, manage?: string} $expect
+     * @param array{reference?: string, link_id?: string, manage?: string, signature?: string, keys?: array<string, string>, tolerance_sec?: int} $expect
      * @return array{confirmed: bool, event_id: string, type: string, dedupe_key?: string, reason?: string, payment?: array<string, mixed>, subscriber?: array<string, mixed>}
      */
     public function handleNotification(string|array $notification, array $expect): array
@@ -829,6 +925,20 @@ final class P2FluxClient
         // A malformed id would match too much ('0x' is a prefix of every reference).
         if (($reference !== '' && preg_match('/^0x[0-9a-f]{64}$/', $reference) !== 1) || ($linkId !== '' && preg_match('/^0x[0-9a-f]{32}$/', $linkId) !== 1)) {
             throw new \InvalidArgumentException('reference must be the 32-byte reference from createPayment, link_id the 16-byte link id');
+        }
+        if (isset($expect['signature'])) {
+            if (!is_string($notification)) {
+                throw new \InvalidArgumentException('signature needs the raw body as a string');
+            }
+            try {
+                $this->verifyWebhook($notification, (string) $expect['signature'], array_intersect_key($expect, ['keys' => 1, 'tolerance_sec' => 1]));
+            } catch (P2FluxException $e) {
+                if ($e->action !== 'INVALID_REQUEST') {
+                    throw $e;
+                }
+
+                return ['confirmed' => false, 'event_id' => '', 'type' => '', 'reason' => $e->status];
+            }
         }
         $event = is_string($notification) ? json_decode($notification, true) : $notification;
         if (!is_array($event)) {
