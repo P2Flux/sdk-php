@@ -39,6 +39,7 @@
     "test": [
       "@test:transport",
       "@test:webhook-signature",
+      "@test:statement",
       "@test:checkout-link",
       "@test:paywall",
       "@test:examples",
@@ -47,6 +48,7 @@
     ],
     "test:transport": "php tests/transport.php",
     "test:webhook-signature": "php tests/webhook-signature.php",
+    "test:statement": "php tests/statement.php",
     "test:checkout-link": "php tests/checkout-link.php",
     "test:examples": "php tests/examples.php",
     "test:complete-flow": "php tests/complete-flow.php",

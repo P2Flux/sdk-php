@@ -197,6 +197,26 @@ final class P2FluxClient
     }
 
     /**
+     * Does this on-chain `$reference` commit to your `$merchantRef`? True exactly when
+     * reference == keccak256("p2flux.merchant_ref.v1" || salt || merchant_ref), computed here with no
+     * call to P2Flux - so you, or an auditor you hand the salt to, can prove which order a payment on
+     * chain settled. `$salt` is the `reference_salt` the payment came back with. Malformed input is
+     * false. Pure PHP (P2Flux\Keccak), no extension.
+     */
+    public static function checkMerchantRef(string $reference, string $salt, string $merchantRef): bool
+    {
+        if (preg_match('/^0x[0-9a-fA-F]{64}$/', $reference) !== 1 || preg_match('/^0x[0-9a-fA-F]{64}$/', $salt) !== 1
+            || preg_match('~^[A-Za-z0-9._:/#-]{1,64}$~', $merchantRef) !== 1) {
+            return false;
+        }
+        if (!class_exists(Keccak::class)) {
+            require_once __DIR__ . '/Keccak.php';
+        }
+
+        return Keccak::hash256('p2flux.merchant_ref.v1' . hex2bin(substr($salt, 2)) . $merchantRef) === strtolower($reference);
+    }
+
+    /**
      * Check a webhook's `p2flux-signature` header and return the decoded event.
      *
      * Pass the body EXACTLY as received (file_get_contents('php://input'), before any decoding) and
@@ -456,8 +476,8 @@ final class P2FluxClient
      * `reference` then equals keccak256("p2flux.merchant_ref.v1" || reference_salt || merchant_ref),
      * so you or an auditor can prove which order a payment settled. verifyPayment(), recoverPayment(),
      * resolvePayment(), verifyRefund() and the payment.paid webhook echo it. Needs an API with
-     * merchant_ref (an older one refuses the field). This SDK has no keccak: check the commitment with
-     * the JS SDK's checkMerchantRef() or `cast keccak` (see the docs).
+     * merchant_ref (an older one refuses the field). Check the commitment with
+     * P2FluxClient::checkMerchantRef() (no API call).
      *
      * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
      * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, merchant_ref?: string, reference_salt?: string, ...}
