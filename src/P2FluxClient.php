@@ -1038,7 +1038,10 @@ final class P2FluxClient
      *
      * Optional `signature`: the `p2flux-signature` header. Given, the raw body (a string) is checked
      * first (verifyWebhook(), with `keys` / `tolerance_sec` as there) and a bad or stale one returns
-     * `confirmed => false` with reason WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TOO_OLD.
+     * `confirmed => false` with reason WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TOO_OLD: answer those with a
+     * 4xx/5xx, never a 2xx, so the event is sent again and shows in the delivery history. `signature`
+     * null or absent (no header: an API before the signing release) checks the event unsigned - accepted
+     * only because the API's verdict decides, never the event body.
      *
      * @param string|array<string, mixed> $notification
      * @param array{reference?: string, link_id?: string, manage?: string, signature?: string, keys?: array<string, string>, tolerance_sec?: int} $expect

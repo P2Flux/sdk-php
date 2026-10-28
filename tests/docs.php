@@ -194,6 +194,10 @@ foreach ([
     check("{$page} states \"{$phrase}\"", stripos($text, $phrase) !== false);
 }
 
+$readme = (string) file_get_contents($root . '/README.md');
+check('README: answer 4xx/5xx when the reason starts with WEBHOOK_, never 2xx', stripos($readme, 'answer 4xx/5xx when the reason starts with `WEBHOOK_`') !== false && stripos($readme, 'never 2xx') !== false);
+check("README: an absent header is null, not ''", !str_contains($readme, "'signature' => \$_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? ''"));
+
 // --- the install command the README promises is the package composer.json declares -------
 
 $composer = json_decode((string) file_get_contents($root . '/composer.json'), true);

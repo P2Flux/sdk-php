@@ -135,10 +135,16 @@ shared secret). Check it with the raw body, before decoding (ext-sodium):
 
 ```php
 $event = $p2flux->verifyWebhook($rawBody, $_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? ''); // throws WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TOO_OLD
-// or in one step: handleNotification($rawBody, ['reference' => $ref, 'signature' => $_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? ''])
+// or in one step: handleNotification($rawBody, ['reference' => $ref, 'signature' => $_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? null])
 ```
 
 A signature proves P2Flux sent it, not that money moved: `handleNotification` still asks the API.
+
+Answer 4xx/5xx when the reason starts with `WEBHOOK_` (`WEBHOOK_SIGNATURE_INVALID`, `WEBHOOK_TOO_OLD`),
+never 2xx: the event then stays pending, is sent again and shows in the delivery history. A request
+without the header (an API before the release that signs, 2026-11) passes `signature` null (or leaves it
+out) and is checked unsigned - accepted only because the API's verdict (verifyPayment()) decides, never
+the body.
 
 **Delivery history.** `webhookDeliveries(['intent' => ...])` (or `['manage' => ...]` for a link) lists
 each event with every attempt's time, HTTP status (0 = no answer) and duration, kept 7 days;
