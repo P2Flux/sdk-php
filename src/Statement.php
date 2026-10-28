@@ -71,6 +71,8 @@ final class Statement
 
     private const LOG_SPAN = 10000; // mainnet.base.org serves 10,000 blocks per eth_getLogs
     private const BATCH = 20;
+    private const RETRIES = 3; // rounds after every URL answered HTTP 429
+    private const BACKOFF_MS = 200; // doubled each round: 200, 400, 800
     private const COLUMNS = ['date', 'tx_hash', 'kind', 'payer', 'reference', 'merchant_ref', 'gross', 'p2flux_fee', 'network_fee', 'net'];
     private const VALUE_COLUMNS = ['value_usd', 'value_eur', 'value_gbp', 'rate_date'];
     private const AMOUNTS = ['gross', 'p2flux_fee', 'network_fee', 'net', 'value_usd', 'value_eur', 'value_gbp'];
@@ -313,18 +315,38 @@ final class Statement
             foreach (array_merge([['address' => $net['splitter'], 'deploy_block' => $net['splitter_deploy_block']]], $net['retired_splitters']) as $c) {
                 array_push($paid, ...$scan($c['address'], $c['deploy_block'], [self::TOPICS['paid'], null, $walletTopic]));
             }
-            $receipts = $this->rpc(array_map(static fn (array $l): array => ['eth_getTransactionReceipt', [$l['transactionHash']]], $paid));
-            foreach ($paid as $i => $l) {
-                [$netUnits, $fee] = self::words($l['data']) + [0, 0];
-                $payer = (string) ($receipts[$i]['from'] ?? '');
-                foreach ($receipts[$i]['logs'] ?? [] as $r) {
+            /* The payer: the sender of the USDC transfer of net to the wallet in that transaction - one Transfer
+             * scan over the payments' blocks; a transaction without one (none seen yet) falls back to its receipt. */
+            $payerIn = static function (array $logs, int $netUnits) use ($net, $wallet): ?string {
+                foreach ($logs as $r) {
                     if (strtolower($r['address']) === strtolower($net['usdc']) && ($r['topics'][0] ?? '') === self::TOPICS['transfer']
                         && self::addressOf($r['topics'][2] ?? '') === $wallet && (self::words($r['data'])[0] ?? -1) === $netUnits) {
-                        $payer = self::addressOf($r['topics'][1]);
-                        break;
+                        return self::addressOf($r['topics'][1]);
                     }
                 }
-                $entries[] = $row($l, 'payment', $payer, $l['topics'][1], $netUnits + $fee, $fee, 0, $netUnits);
+
+                return null;
+            };
+            $byTx = [];
+            if ($paid !== []) {
+                $blocks = array_map(static fn (array $l): int => hexdec($l['blockNumber']), $paid);
+                foreach ($this->getLogs($net['usdc'], [self::TOPICS['transfer'], null, $walletTopic], min($blocks), max($blocks)) as $t) {
+                    $byTx[strtolower($t['transactionHash'])][] = $t;
+                }
+            }
+            $unmatched = array_values(array_filter($paid, static fn (array $l): bool => $payerIn($byTx[strtolower($l['transactionHash'])] ?? [], self::words($l['data'])[0] ?? 0) === null));
+            $receipts = $this->rpc(array_map(static fn (array $l): array => ['eth_getTransactionReceipt', [$l['transactionHash']]], $unmatched));
+            $receiptOf = [];
+            foreach ($unmatched as $i => $l) {
+                $receiptOf[strtolower($l['transactionHash'])] = $receipts[$i];
+            }
+            foreach ($paid as $l) {
+                [$netUnits, $fee] = self::words($l['data']) + [0, 0];
+                $tx = strtolower($l['transactionHash']);
+                $payer = array_key_exists($tx, $receiptOf)
+                    ? ($payerIn($receiptOf[$tx]['logs'] ?? [], $netUnits) ?? (string) ($receiptOf[$tx]['from'] ?? ''))
+                    : $payerIn($byTx[$tx], $netUnits);
+                $entries[] = $row($l, 'payment', (string) $payer, $l['topics'][1], $netUnits + $fee, $fee, 0, $netUnits);
             }
 
             // Sponsored: the merchant funds the fee and the fixed network fee out of the amount; the buyer's quoted network fee is on top.
@@ -399,12 +421,14 @@ final class Statement
     }
 
     /**
-     * Batched JSON-RPC over the URLs, the next URL on any failure; an error inside a batch fails the batch.
+     * Batched JSON-RPC over the URLs (20 calls a batch), the next URL on any failure; an error inside a
+     * batch fails the batch - unless $each, where a call's own JSON-RPC error comes back in its place as a
+     * RuntimeException. When every URL answered HTTP 429 the round is retried after a backoff.
      *
      * @param list<array{0: string, 1: list<mixed>}> $calls
      * @return list<mixed>
      */
-    private function rpc(array $calls): array
+    private function rpc(array $calls, bool $each = false): array
     {
         $out = [];
         foreach (array_chunk($calls, self::BATCH) as $chunk) {
@@ -414,29 +438,41 @@ final class Statement
             }
             $answers = null;
             $last = new \RuntimeException('no RPC URL');
-            foreach ($this->urls as $url) {
-                try {
-                    [$status, $replies] = ($this->transport)($url, $batch, $this->timeout);
-                    if ($status >= 400 || !array_is_list($replies)) {
-                        throw new \RuntimeException("RPC {$url}: HTTP {$status}");
-                    }
-                    $byId = array_column($replies, null, 'id');
-                    $answers = [];
-                    foreach (array_keys($chunk) as $id) {
-                        $r = $byId[$id] ?? null;
-                        if (!is_array($r) || isset($r['error']) || !array_key_exists('result', $r)) {
-                            throw new \RuntimeException("RPC {$url}: " . (string) ($r['error']['message'] ?? 'no answer'));
+            for ($round = 0; $answers === null; $round++) {
+                $limited = false;
+                foreach ($this->urls as $url) {
+                    try {
+                        [$status, $replies] = ($this->transport)($url, $batch, $this->timeout);
+                        if ($status >= 400 || !array_is_list($replies)) {
+                            $limited = $limited || $status === 429;
+                            throw new \RuntimeException("RPC {$url}: HTTP {$status}");
                         }
-                        $answers[] = $r['result'];
+                        $byId = array_column($replies, null, 'id');
+                        $answers = [];
+                        foreach (array_keys($chunk) as $id) {
+                            $r = $byId[$id] ?? null;
+                            if (!is_array($r) || isset($r['error']) || !array_key_exists('result', $r)) {
+                                $error = new \RuntimeException("RPC {$url}: " . (string) ($r['error']['message'] ?? 'no answer'));
+                                if (!$each) {
+                                    throw $error;
+                                }
+                                $answers[] = $error;
+                                continue;
+                            }
+                            $answers[] = $r['result'];
+                        }
+                        break;
+                    } catch (\RuntimeException $e) { // P2FluxException (NETWORK_ERROR, curl timeout) is one too
+                        $answers = null;
+                        $last = $e;
                     }
-                    break;
-                } catch (\RuntimeException $e) { // P2FluxException (NETWORK_ERROR) is one too
-                    $answers = null;
-                    $last = $e;
                 }
-            }
-            if ($answers === null) {
-                throw $last;
+                if ($answers === null) {
+                    if (!$limited || $round >= self::RETRIES) {
+                        throw $last;
+                    }
+                    usleep(self::BACKOFF_MS * 1000 * 2 ** $round);
+                }
             }
             array_push($out, ...$answers);
         }
@@ -445,7 +481,8 @@ final class Statement
     }
 
     /**
-     * Every log matching $topics on $address in [from, to], halving any range the node refuses.
+     * Every log matching $topics on $address in [from, to], oldest first: LOG_SPAN-block spans, 20 to a
+     * batch; a span the node refuses (its own JSON-RPC error, e.g. range too large) is halved and asked again.
      *
      * @param list<mixed> $topics
      * @return list<array<string, mixed>>
@@ -453,22 +490,27 @@ final class Statement
     private function getLogs(string $address, array $topics, int $from, int $to): array
     {
         $out = [];
-        $range = function (int $a, int $b) use (&$range, &$out, $address, $topics): void {
-            try {
-                [$logs] = $this->rpc([['eth_getLogs', [['address' => $address, 'topics' => $topics, 'fromBlock' => '0x' . dechex($a), 'toBlock' => '0x' . dechex($b)]]]]);
-                array_push($out, ...$logs);
-            } catch (\RuntimeException $e) {
-                if ($a === $b) {
-                    throw $e;
-                }
-                $mid = intdiv($a + $b, 2);
-                $range($a, $mid);
-                $range($mid + 1, $b);
-            }
-        };
+        $spans = [];
         for ($a = $from; $a <= $to; $a += self::LOG_SPAN) {
-            $range($a, min($to, $a + self::LOG_SPAN - 1));
+            $spans[] = [$a, min($to, $a + self::LOG_SPAN - 1)];
         }
+        while ($spans !== []) {
+            $answers = $this->rpc(array_map(static fn (array $s): array => ['eth_getLogs', [['address' => $address, 'topics' => $topics, 'fromBlock' => '0x' . dechex($s[0]), 'toBlock' => '0x' . dechex($s[1])]]], $spans), true);
+            $refused = [];
+            foreach ($answers as $i => $logs) {
+                [$a, $b] = $spans[$i];
+                if (!$logs instanceof \RuntimeException) {
+                    array_push($out, ...$logs);
+                } elseif ($a === $b) {
+                    throw $logs;
+                } else {
+                    $mid = intdiv($a + $b, 2);
+                    array_push($refused, [$a, $mid], [$mid + 1, $b]);
+                }
+            }
+            $spans = $refused;
+        }
+        usort($out, static fn (array $x, array $y): int => [hexdec($x['blockNumber']), hexdec($x['logIndex'])] <=> [hexdec($y['blockNumber']), hexdec($y['logIndex'])]);
 
         return $out;
     }

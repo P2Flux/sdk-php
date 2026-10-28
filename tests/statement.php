@@ -93,12 +93,27 @@ $LOGS = [
     // A huge row (2^59 units, ~576 billion USDC) for wallet addr 6: beyond the currency math's native ints.
     $log($net['sponsored_splitter'], [$T['sponsored_paid'], $hash('9'), $topic($addr('6')), $topic($addr('d'))], $data(1 << 59, 0, 0, 0), 46440300, $hash('9')),
 ];
-$RECEIPTS = [$hash('9') => ['from' => $P4, 'logs' => [$transfer($P4, $WALLET, 19800000, $BS, $hash('9'), 1)]], $hash('1') => ['from' => $addr('5'), 'logs' => [$transfer($P1, $WALLET, 9900000, $B1, $hash('1'), 1), $transfer($P1, $addr('f'), 100000, $B1, $hash('1'), 2)]]];
+// The payers' USDC transfers into the wallet (what a receipt holds too); wallet addr e: a native payment whose transfer is not in the logs.
+array_push($LOGS,
+    $transfer($P1, $WALLET, 9900000, $B1, $hash('1'), 1),
+    $transfer($P4, $WALLET, 19800000, $BS, $hash('9'), 1),
+    $transfer($addr('5'), $WALLET, 1, 46000000, $hash('8'), 1),
+    $log($net['splitter'], [$T['paid'], $hash('3'), $topic($addr('e')), $topic($net['usdc'])], $data(2000000, 0), 46440400, '0x' . str_repeat('cd', 32), 4),
+);
+$RECEIPTS = ['0x' . str_repeat('cd', 32) => ['from' => $addr('5'), 'logs' => []]] + [$hash('9') => ['from' => $P4, 'logs' => [$transfer($P4, $WALLET, 19800000, $BS, $hash('9'), 1)]], $hash('1') => ['from' => $addr('5'), 'logs' => [$transfer($P1, $WALLET, 9900000, $B1, $hash('1'), 1), $transfer($P1, $addr('f'), 100000, $B1, $hash('1'), 2)]]];
 
 $matches = static fn (mixed $want, ?string $got): bool => $want === null
     || (is_array($want) ? in_array(strtolower((string) $got), array_map('strtolower', $want), true) : strtolower($want) === strtolower((string) $got));
 $seen = [];
-$stub = static function (string $url, array $batch, int $timeout) use (&$seen, $LOGS, $RECEIPTS, $tsOf, $matches): array {
+$requests = 0;
+/* limit: the widest eth_getLogs range served (wider is a JSON-RPC error); status(n): the HTTP status of the n-th request. */
+$makeStub = static function (int $limit = 5000, ?callable $status = null) use (&$seen, &$requests, $LOGS, $RECEIPTS, $tsOf, $matches): callable {
+    return static function (string $url, array $batch, int $timeout) use (&$seen, &$requests, $limit, $status, $LOGS, $RECEIPTS, $tsOf, $matches): array {
+    $code = $status === null ? 200 : $status($requests);
+    $requests++;
+    if ($code !== 200) {
+        return [$code, []];
+    }
     $out = [];
     foreach ($batch as $r) {
         $seen[] = $r;
@@ -110,8 +125,8 @@ $stub = static function (string $url, array $batch, int $timeout) use (&$seen, $
         } elseif ($method === 'eth_getLogs') {
             $f = $params[0];
             [$from, $to] = [hexdec($f['fromBlock']), hexdec($f['toBlock'])];
-            $answer = $to - $from > 5000
-                ? ['error' => ['code' => -32005, 'message' => 'query exceeds max block range 5000']]
+            $answer = $to - $from > $limit
+                ? ['error' => ['code' => -32005, 'message' => "query exceeds max block range {$limit}"]]
                 : ['result' => array_values(array_filter($LOGS, static function (array $l) use ($f, $from, $to, $matches): bool {
                     $n = hexdec($l['blockNumber']);
                     foreach ($f['topics'] as $i => $t) {
@@ -128,7 +143,9 @@ $stub = static function (string $url, array $batch, int $timeout) use (&$seen, $
     }
 
     return [200, array_reverse($out)]; // batches may come back in any order
+    };
 };
+$stub = $makeStub();
 $intent = static fn (array $payload): string => 'p2f1.k1.' . rtrim(strtr(base64_encode(json_encode($payload)), '+/', '-_'), '=') . '.sig';
 $run = static fn (array $extra = []): array => Statement::statement($extra + [
     'wallet' => $WALLET,
@@ -283,6 +300,34 @@ try {
     $threw = true;
 }
 check('an unknown format is refused', $threw);
+
+// --- RPC: batched spans, one Transfer scan, 429 backoff ---------------------------------------
+$count = static function (string $method) use (&$seen): int {
+    return count(array_filter($seen, static fn (array $r): bool => $r['method'] === $method));
+};
+$wide = ['from' => $tsOf($B1 - 30 * 43200), 'to' => $tsOf($B5 + 10)];
+[$seen, $requests] = [[], 0];
+$rows30 = $run($wide + ['transport' => $makeStub(1000000)]);
+check('30 days: getLogs spans 20 to a batch, few HTTP requests', $requests <= 40, "requests: {$requests}");
+check('native payers from one Transfer scan, no receipt', $count('eth_getTransactionReceipt') === 0);
+check('the same rows as with a node that refuses wide ranges', $rows30 === $run($wide));
+[$seen, $requests] = [[], 0];
+$w4 = $run(['wallet' => $addr('e')]);
+check('a payment whose transfer is not in the logs: payer from the receipt', ($w4[0]['payer'] ?? '') === $addr('5') && $count('eth_getTransactionReceipt') === 1, json_encode([$w4, $count('eth_getTransactionReceipt')]));
+[$seen, $requests] = [[], 0];
+$run(['transport' => $makeStub(1000000)]);
+$clean = $count('eth_getLogs');
+[$seen, $requests] = [[], 0];
+$rows429 = $run(['transport' => $makeStub(1000000, static fn (int $n): int => $n === 5 ? 429 : 200)]);
+check('HTTP 429 is retried, never taken for "range too large"', count($rows429) === 4 && $count('eth_getLogs') === $clean, "getLogs {$count('eth_getLogs')} vs {$clean}");
+[$seen, $requests] = [[], 0];
+$threw = null;
+try {
+    $run(['transport' => $makeStub(5000, static fn (int $n): int => $n >= 5 ? 429 : 200)]);
+} catch (RuntimeException $e) {
+    $threw = $e;
+}
+check('always 429: an error after a few backed-off rounds', $threw !== null && str_contains($threw->getMessage(), '429') && $requests <= 5 + 4, "requests: {$requests}"); // 5 block reads, then 1 + 3 retries
 
 echo $failures === 0 ? "\nstatement OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);
