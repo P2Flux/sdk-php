@@ -104,6 +104,20 @@ try {
 }
 check('a signature needs the raw body', $threw);
 
+// tolerance_sec: an int >= 0 (a numeric string is cast); anything else is a programming error.
+$badTolerance = static function (mixed $tolerance) use ($offline, $keys): bool {
+    try {
+        $offline->verifyWebhook(BODY, HEADER, ['keys' => $keys, 'now' => T + 3600, 'tolerance_sec' => $tolerance]);
+    } catch (InvalidArgumentException) {
+        return true;
+    } catch (P2FluxException) {
+    }
+
+    return false;
+};
+check("tolerance_sec 'abc', -1, 1.5 or an array is an InvalidArgumentException", $badTolerance('abc') && $badTolerance(-1) && $badTolerance(1.5) && $badTolerance([]));
+check("tolerance_sec '3600' (numeric string) is cast", thrown(fn () => $offline->verifyWebhook(BODY, HEADER, ['keys' => $keys, 'now' => T + 3600, 'tolerance_sec' => '3600'])) === '');
+
 // The key cache is per process (per API URL), not per client: a host that builds a client per request
 // (Blesta, PHP-FPM) does not fetch capabilities for every forged kid.
 $calls = 0;

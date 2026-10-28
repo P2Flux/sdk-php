@@ -292,7 +292,7 @@ final class P2FluxClient
      *
      * @param array{keys?: array<string, string>, tolerance_sec?: int, now?: int} $options
      *        keys: kid => base64url public key; default the API's own, from capabilities(), fetched
-     *        once per process. tolerance_sec defaults to 300; now (unix seconds) is for tests.
+     *        once per process. tolerance_sec (int >= 0) defaults to 300; now (unix seconds) is for tests.
      * @return array<string, mixed>
      */
     public function verifyWebhook(string $rawBody, string $header, array $options = []): array
@@ -307,6 +307,10 @@ final class P2FluxClient
         $t = $parts['t'] ?? '';
         $kid = $parts['kid'] ?? '';
         $invalid = new P2FluxException('WEBHOOK_SIGNATURE_INVALID', 'INVALID_REQUEST');
+        $tolerance = filter_var($options['tolerance_sec'] ?? 300, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+        if (!is_int($tolerance)) {
+            throw new \InvalidArgumentException('tolerance_sec must be a whole number of seconds, 0 or more');
+        }
         if (preg_match('/^\d{1,12}$/', $t) !== 1 || $kid === '' || ($parts['v1'] ?? '') === '') {
             throw $invalid;
         }
@@ -323,7 +327,7 @@ final class P2FluxClient
             throw $invalid;
         }
         // Checked after the signature, so a stale answer is only ever given about a genuine P2Flux event.
-        if (abs(($options['now'] ?? time()) - (int) $t) > ($options['tolerance_sec'] ?? 300)) {
+        if (abs(($options['now'] ?? time()) - (int) $t) > $tolerance) {
             throw new P2FluxException('WEBHOOK_TOO_OLD', 'INVALID_REQUEST');
         }
         $event = json_decode($rawBody, true);
