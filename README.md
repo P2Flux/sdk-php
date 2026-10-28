@@ -129,6 +129,47 @@ subscriptions with `link_id` and `manage`) and checks the answer is for YOUR ord
 response has no `notify_url`, the payment is not watched (the service is at capacity): keep polling,
 exactly as without webhooks.
 
+**Signed webhooks.** Every delivery carries `p2flux-signature: t=<unix>,kid=<id>,v1=<Ed25519>` over
+`{$t}.{$rawBody}`, signed with P2Flux's key (public, in `capabilities()['webhook_signing_keys']`; no
+shared secret). Check it with the raw body, before decoding (ext-sodium):
+
+```php
+$event = $p2flux->verifyWebhook($rawBody, $_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? ''); // throws WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TOO_OLD
+// or in one step: handleNotification($rawBody, ['reference' => $ref, 'signature' => $_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? ''])
+```
+
+A signature proves P2Flux sent it, not that money moved: `handleNotification` still asks the API.
+
+**Delivery history.** `webhookDeliveries(['intent' => ...])` (or `['manage' => ...]` for a link) lists
+each event with every attempt's time, HTTP status (0 = no answer) and duration, kept 7 days;
+`redeliverWebhook($token, $eventId)` sends a pending one now (at most 3 times per event per hour).
+
+### Your own order number: `merchant_ref`
+
+Pass `merchant_ref` (ASCII letters, digits and `. _ : / # -`, 1-64 characters) to `createPayment`,
+`createPaymentLink`, `createSubscription` or `charge($ref, $merchantRef)`; it comes back on verify,
+recover, link and subscription status, refunds and confirmed notifications. It is signed, not
+encrypted - the buyer can read it - so never personal data. A payment's on-chain `reference` then
+commits to it, provable without P2Flux:
+
+```php
+$payment = $p2flux->createPayment(['recipient' => $wallet, 'amount' => '25.00', 'merchant_ref' => 'INV-1042']);
+P2FluxClient::checkMerchantRef($payment['reference'], $payment['reference_salt'], 'INV-1042'); // true
+```
+
+### Accounting statement
+
+Every payment, subscription charge and probable refund of a wallet, read from the chain over public
+JSON-RPC (no API, no key), as rows or CSV for Xero or QuickBooks - the same rows as the JS SDK:
+
+```php
+$rows = P2Flux\Statement::statement(['wallet' => $wallet, 'from' => strtotime('2026-10-01'), 'to' => strtotime('2026-11-01'), 'intents' => $intents]);
+file_put_contents('october.csv', P2Flux\Statement::toCsv($rows, 'xero')); // 'generic' | 'xero' | 'quickbooks'
+```
+
+`intents` (optional, decoded locally) fill `merchant_ref`. A refund is marked `refund?`: a transfer
+back to a payer after their payment and no larger than it.
+
 ### Redirect checkout: `return_url` and `checkout_url`
 
 Prefer sending the buyer to P2Flux's page and getting them back over opening a window? Every create
@@ -347,7 +388,7 @@ model. The two are released independently, so their version numbers differ.
 
 ## Requirements
 
-PHP 8.1+ with `ext-json`. `ext-curl` is used by the default transport only; pass your own
+PHP 8.1+ (64-bit) with `ext-json` and `ext-sodium` (bundled with PHP since 7.2; signed webhooks). `ext-curl` is used by the default transport only; pass your own
 `transport` (WordPress's `wp_remote_post`, Guzzle, Symfony HttpClient) and it is never loaded.
 
 ## License
