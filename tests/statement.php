@@ -129,6 +129,9 @@ $run = static fn (array $extra = []): array => Statement::statement($extra + [
 ]);
 $iso = static fn (int $block): string => gmdate('Y-m-d\TH:i:s.000\Z', $tsOf($block));
 
+// A pasted intent is decoded without its signature: a merchant_ref that breaks the API's rule is not joined.
+$forged = $run(['intents' => [$intent(['v' => 1, 'reference' => $REF1, 'mr' => '=HYPERLINK("http://x")']), $intent(['v' => 1, 'reference' => $REF2, 'mr' => 'a b'])]]);
+check('merchant_ref from a pasted intent only when it follows MERCHANT_REF', array_column($forged, 'merchant_ref') === ['', '', '', ''], json_encode(array_column($forged, 'merchant_ref')));
 $rows = $run(['intents' => [$intent(['v' => 1, 'reference' => $REF1, 'mr' => 'INV-1042']), 'not-an-intent']]);
 $expected = [
     ['date' => $iso($B1), 'tx_hash' => $hash('1'), 'kind' => 'payment', 'payer' => $P1, 'reference' => $REF1, 'merchant_ref' => 'INV-1042', 'gross' => '10.000000', 'p2flux_fee' => '0.100000', 'network_fee' => '0.000000', 'net' => '9.900000'],

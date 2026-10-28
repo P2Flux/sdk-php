@@ -211,12 +211,28 @@ final class P2FluxClient
 
     /**
      * The exact text a receiving wallet signs (personal_sign) for createMerchantToken(). $chainId is the
-     * API's network (capabilities()['chain_id']); $issuedAt unix seconds, at most 5 minutes old when sent.
+     * API's network (capabilities()['chain_id']); $issuedAt unix seconds, at most 5 minutes old when sent;
+     * $apiUrl the API you send it to (the client's apiUrl) - its origin is in the text, so the signature
+     * is good at that deployment only.
      */
-    public static function merchantTokenMessage(int $chainId, string $wallet, int $issuedAt): string
+    public static function merchantTokenMessage(int $chainId, string $wallet, int $issuedAt, string $apiUrl): string
     {
         return "P2Flux merchant token\n\nThis signature only raises your P2Flux API limits. It moves no funds and approves nothing.\n\n"
-            . 'Wallet: ' . strtolower($wallet) . "\nChain ID: " . $chainId . "\nIssued at: " . $issuedAt;
+            . 'Wallet: ' . strtolower($wallet) . "\nAPI: " . self::origin($apiUrl) . "\nChain ID: " . $chainId . "\nIssued at: " . $issuedAt;
+    }
+
+    /** scheme://host[:port] as a browser's URL.origin writes it: lowercase, default port dropped. */
+    private static function origin(string $url): string
+    {
+        $p = parse_url($url);
+        if (!is_array($p) || !isset($p['scheme'], $p['host'])) {
+            throw new \InvalidArgumentException('apiUrl must be an absolute URL');
+        }
+        $scheme = strtolower($p['scheme']);
+        $port = $p['port'] ?? null;
+        $default = ['https' => 443, 'http' => 80][$scheme] ?? null;
+
+        return $scheme . '://' . strtolower($p['host']) . ($port !== null && $port !== $default ? ':' . $port : '');
     }
 
     /**

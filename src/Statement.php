@@ -490,7 +490,8 @@ final class Statement
         foreach ($intents as $intent) {
             $json = base64_decode(strtr(explode('.', (string) $intent)[2] ?? '', '-_', '+/'), true);
             $p = is_string($json) ? json_decode($json, true) : null;
-            if (is_array($p) && is_string($p['reference'] ?? null) && is_string($p['mr'] ?? null)) {
+            // Decoded without the signature: only a value the API itself could have signed (MERCHANT_REF) is kept.
+            if (is_array($p) && is_string($p['reference'] ?? null) && is_string($p['mr'] ?? null) && preg_match('~^[A-Za-z0-9._:/#-]{1,64}$~D', $p['mr']) === 1) {
                 $map[strtolower($p['reference'])] = $p['mr'];
             }
         }

@@ -430,9 +430,12 @@ check('redeliverWebhook names the event', end($stub->calls)['payload'] === ['man
 // --- higher limits: merchant token and partner key ------------------------------------------
 
 check('merchantTokenMessage is the exact text the API verifies (same as sdk-js and core)',
-    P2FluxClient::merchantTokenMessage(8453, '0xAbCdEf0000000000000000000000000000000001', 1800000000)
+    P2FluxClient::merchantTokenMessage(8453, '0xAbCdEf0000000000000000000000000000000001', 1800000000, 'https://API.p2flux.com/')
     === "P2Flux merchant token\n\nThis signature only raises your P2Flux API limits. It moves no funds and approves nothing.\n\n"
-    . "Wallet: 0xabcdef0000000000000000000000000000000001\nChain ID: 8453\nIssued at: 1800000000");
+    . "Wallet: 0xabcdef0000000000000000000000000000000001\nAPI: https://api.p2flux.com\nChain ID: 8453\nIssued at: 1800000000");
+check('merchantTokenMessage names the origin of apiUrl (port kept, path and default port dropped)',
+    str_contains(P2FluxClient::merchantTokenMessage(84532, '0x01', 1, 'https://api-test.p2flux.com:8443/v1'), "\nAPI: https://api-test.p2flux.com:8443\n")
+    && str_contains(P2FluxClient::merchantTokenMessage(84532, '0x01', 1, 'https://api-test.p2flux.com:443'), "\nAPI: https://api-test.p2flux.com\n"));
 $stub = new StubTransport(['' => [200, ['merchant_token' => 'p2m1.k1.x.y', 'wallet' => '0xabc', 'expires_at' => 99]]]);
 $client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
 $minted = $client->createMerchantToken(['wallet' => '0xabc', 'signature' => '0x01', 'issued_at' => 5]);
