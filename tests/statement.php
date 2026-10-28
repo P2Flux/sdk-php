@@ -252,14 +252,21 @@ check('generic CSV', Statement::toCsv($ROWS) === implode("\r\n", [
 ]) . "\r\n");
 check('xero CSV', Statement::toCsv($ROWS, 'xero') === implode("\r\n", [
     'Date,Amount,Payee,Description,Reference',
-    "01/10/2026,9.900000,{$P1},\"P2Flux payment {$h1}: gross 10.000000, P2Flux fee 0.100000, network fee 0.000000\",\"'-INV,\"\"1\"\"\"",
-    "02/10/2026,-1.000000,{$P1},\"P2Flux refund? {$h4}: gross -1.000000, P2Flux fee 0.000000, network fee 0.000000\",{$REF1}",
+    "01/10/2026,9.90,{$P1},\"P2Flux payment {$h1}: gross 10.000000, P2Flux fee 0.100000, network fee 0.000000, net 9.900000\",\"'-INV,\"\"1\"\"\"",
+    "02/10/2026,-1.00,{$P1},\"P2Flux refund? {$h4}: gross -1.000000, P2Flux fee 0.000000, network fee 0.000000, net -1.000000\",{$REF1}",
 ]) . "\r\n");
 check('quickbooks CSV', Statement::toCsv($ROWS, 'quickbooks') === implode("\r\n", [
     'Date,Description,Amount',
-    "10/01/2026,\"P2Flux payment -INV,\"\"1\"\" {$h1}: gross 10.000000, P2Flux fee 0.100000, network fee 0.000000\",9.900000",
-    "10/02/2026,\"P2Flux refund? {$REF1} {$h4}: gross -1.000000, P2Flux fee 0.000000, network fee 0.000000\",-1.000000",
+    "10/01/2026,\"P2Flux payment -INV,\"\"1\"\" {$h1}: gross 10.000000, P2Flux fee 0.100000, network fee 0.000000, net 9.900000\",9.90",
+    "10/02/2026,\"P2Flux refund? {$REF1} {$h4}: gross -1.000000, P2Flux fee 0.000000, network fee 0.000000, net -1.000000\",-1.00",
 ]) . "\r\n");
+$nets = ['0.004999', '0.005000', '-0.005000', '-0.004999', '1234.565000', '0.000000'];
+$netRows = array_map(static fn (string $n): array => ['merchant_ref' => '', 'gross' => $n, 'net' => $n] + $ROWS[0], $nets);
+$amounts = static fn (string $csv, int $col): array => array_map(static fn (string $l): string => array_slice(explode(',', $l), $col)[0], array_slice(explode("\r\n", trim($csv)), 1));
+$want = ['0.00', '0.01', '-0.01', '0.00', '1234.57', '0.00'];
+check('xero and quickbooks amounts: 2 decimals, half away from zero; generic keeps 6',
+    $amounts(Statement::toCsv($netRows, 'xero'), 1) === $want && $amounts(Statement::toCsv($netRows, 'quickbooks'), -1) === $want && $amounts(Statement::toCsv($netRows), -1) === $nets,
+    json_encode([$amounts(Statement::toCsv($netRows, 'xero'), 1), $amounts(Statement::toCsv($netRows, 'quickbooks'), -1)]));
 $threw = false;
 try {
     Statement::toCsv($ROWS, 'excel');

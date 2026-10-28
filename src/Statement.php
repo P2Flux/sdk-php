@@ -206,7 +206,9 @@ final class Statement
      *   (merchant_ref, else the on-chain reference).
      * - quickbooks: the 3-column bank upload - Date (mm/dd/yyyy), Description, Amount (net).
      *
-     * The amount booked is net, what reached the wallet; gross and fees are in the description. Rows
+     * The amount booked is net, what reached the wallet: 6 decimals in generic; Xero and QuickBooks take 2,
+     * so their Amount is net rounded to cents (half away from zero, as the currency columns) and the
+     * description keeps the exact 6-decimal gross, fees and net. Rows
      * with currencies values: generic adds the value columns; xero and quickbooks keep their layout
      * (amount in USD) and name the EUR/GBP values and the ECB day in the description.
      *
@@ -217,7 +219,9 @@ final class Statement
         $fx = static fn (array $r): string => isset($r['rate_date'])
             ? (isset($r['value_eur']) ? ", EUR {$r['value_eur']}" : '') . (isset($r['value_gbp']) ? ", GBP {$r['value_gbp']}" : '') . " (ECB {$r['rate_date']})"
             : '';
-        $describe = static fn (array $r): string => "{$r['tx_hash']}: gross {$r['gross']}, P2Flux fee {$r['p2flux_fee']}, network fee {$r['network_fee']}" . $fx($r);
+        $describe = static fn (array $r): string => "{$r['tx_hash']}: gross {$r['gross']}, P2Flux fee {$r['p2flux_fee']}, network fee {$r['network_fee']}, net {$r['net']}" . $fx($r);
+        // net to cents, half away from zero, as the currency columns.
+        $amount = static fn (array $r): string => self::cents(self::roundDiv((int) str_replace('.', '', $r['net']), 10000));
         $date = static fn (array $r, bool $us): string => $us
             ? substr($r['date'], 5, 2) . '/' . substr($r['date'], 8, 2) . '/' . substr($r['date'], 0, 4)
             : substr($r['date'], 8, 2) . '/' . substr($r['date'], 5, 2) . '/' . substr($r['date'], 0, 4);
@@ -230,13 +234,13 @@ final class Statement
         } elseif ($format === 'xero') {
             $lines = ['Date,Amount,Payee,Description,Reference'];
             foreach ($rows as $r) {
-                $lines[] = implode(',', [$date($r, false), $r['net'], self::cell($r['payer']), self::cell("P2Flux {$r['kind']} " . $describe($r)), self::cell($r['merchant_ref'] !== '' ? $r['merchant_ref'] : $r['reference'])]);
+                $lines[] = implode(',', [$date($r, false), $amount($r), self::cell($r['payer']), self::cell("P2Flux {$r['kind']} " . $describe($r)), self::cell($r['merchant_ref'] !== '' ? $r['merchant_ref'] : $r['reference'])]);
             }
         } elseif ($format === 'quickbooks') {
             $lines = ['Date,Description,Amount'];
             foreach ($rows as $r) {
                 $ref = $r['merchant_ref'] !== '' ? $r['merchant_ref'] : $r['reference'];
-                $lines[] = implode(',', [$date($r, true), self::cell("P2Flux {$r['kind']} {$ref} " . $describe($r)), $r['net']]);
+                $lines[] = implode(',', [$date($r, true), self::cell("P2Flux {$r['kind']} {$ref} " . $describe($r)), $amount($r)]);
             }
         } else {
             throw new \InvalidArgumentException("unknown CSV format: {$format}");

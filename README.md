@@ -177,7 +177,8 @@ file_put_contents('october.csv', P2Flux\Statement::toCsv($rows, 'xero')); // 'ge
 ```
 
 `intents` (optional, decoded locally) fill `merchant_ref`. A refund is marked `refund?`: a transfer
-back to a payer after their payment and no larger than it. The payment may be up to `lookback_days` (default 90)
+back to a payer after their payment and no larger than what is left of it (a payment is refunded at most
+up to its gross; an exact match is preferred). The payment may be up to `lookback_days` (default 90)
 before `from`: a September payment refunded in October shows on the October statement as the refund
 only.
 
@@ -185,7 +186,8 @@ only.
 (the row's `net`, 2 decimals) and `rate_date` at the ECB euro reference rate of the row's day (a weekend
 or holiday takes the last published day). The rates come from the API's `/v1/rates` (`api_url`, default
 production; only dates are sent) - also as `$client->rates(['from' => ..., 'to' => ...])`. The generic
-CSV gets the extra columns; Xero and QuickBooks keep their layout (amount in USD) and name EUR/GBP in the
+CSV gets the extra columns; Xero and QuickBooks keep their layout (amount in USD, rounded to cents half away from zero; the
+exact 6-decimal gross, fees and net are in the description) and name EUR/GBP in the
 description.
 
 ### Redirect checkout: `return_url` and `checkout_url`
