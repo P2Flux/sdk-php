@@ -359,6 +359,8 @@ $REQUIRED_OPERATIONS = [
     // Webhook delivery history and "retry now".
     '/v1/webhooks/deliveries',
     '/v1/webhooks/redeliver',
+    // ECB exchange rates for statements.
+    '/v1/rates',
 ];
 
 $stub = new StubTransport(['' => [200, ['status' => 'CHARGED', 'valid' => true, 'found' => true]]]);
@@ -393,6 +395,8 @@ $client->collectPaymentLink('p2lm1.x', $hash);
 $client->stopPaymentLink('p2lm1.x', $hash);
 $client->webhookDeliveries(['intent' => 'p2f1.x']);
 $client->redeliverWebhook(['manage' => 'p2lm1.x'], 'evt_1');
+$client->rates(['from' => '2026-10-01', 'to' => '2026-10-31']);
+check('rates sends the range', end($stub->calls)['payload'] === ['from' => '2026-10-01', 'to' => '2026-10-31']);
 
 $reached = array_values(array_unique(array_map(
     static fn (array $call): string => parse_url($call['url'], PHP_URL_PATH),

@@ -566,6 +566,22 @@ final class P2FluxClient
     }
 
     /**
+     * ECB daily euro reference rates for USD and GBP, from..to (YYYY-MM-DD, at most 366 days), from
+     * P2Flux's own copy. For statements in EUR or GBP; USDC counts as USD 1:1. A day the ECB did not
+     * publish carries the last published day's rates, named in rate_date.
+     *
+     * @param array{from: string, to: string} $range
+     * @return array{source: 'ECB', base: 'EUR', fetched_at: int, rates: array<string, array{USD: float, GBP: float, rate_date: string}>}
+     */
+    public function rates(array $range): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/rates', ['from' => (string) ($range['from'] ?? ''), 'to' => (string) ($range['to'] ?? '')]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
      * The trust boundary for one-time payments: re-reads the receipt on chain and checks it against
      * the signed intent. Never grant access on a browser's word alone - call this server-side.
      *
