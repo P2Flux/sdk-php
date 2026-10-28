@@ -180,7 +180,9 @@ file_put_contents('october.csv', P2Flux\Statement::toCsv($rows, 'xero')); // 'ge
 back to a payer after their payment and no larger than what is left of it (a payment is refunded at most
 up to its gross; an exact match is preferred). The payment may be up to `lookback_days` (default 90)
 before `from`: a September payment refunded in October shows on the October statement as the refund
-only.
+only. The look-back never reads below the contracts' deploy block, and a public RPC that no longer keeps
+its oldest blocks shortens it (a refund of an older payment is then not listed) instead of failing. Dates
+map to blocks by the chain's own timestamps - no block time is assumed.
 
 `'currencies' => ['EUR', 'GBP']` adds `value_usd` (USDC booked as USD 1:1), `value_eur`, `value_gbp`
 (the row's `net`, 2 decimals) and `rate_date` at the ECB euro reference rate of the row's day (a weekend

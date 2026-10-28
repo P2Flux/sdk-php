@@ -71,6 +71,8 @@ final class Statement
 
     private const LOG_SPAN = 10000; // mainnet.base.org serves 10,000 blocks per eth_getLogs
     private const BATCH = 20;
+    /** A node's refusal to serve blocks it no longer keeps (its "earliest available" block, when it says). */
+    private const PRUNED = '/prun|earliest available|history (is )?(not |un)available/i';
     private const RETRIES = 3; // rounds after every URL answered HTTP 429
     private const BACKOFF_MS = 200; // doubled each round: 200, 400, 800
     private const COLUMNS = ['date', 'tx_hash', 'kind', 'payer', 'reference', 'merchant_ref', 'gross', 'p2flux_fee', 'network_fee', 'net'];
@@ -279,9 +281,14 @@ final class Statement
     {
         $walletTopic = self::topicOf($wallet);
         $latest = $this->block('latest');
-        // Widened by a few blocks either way; rows are then held to the dates themselves.
-        $fromBlock = max(0, $this->blockNear($fromTs, $latest) - 5);
-        $toBlock = min($latest['n'], $this->blockNear($toTs, $latest) + 5);
+        // Nothing settles below the oldest contract's deploy block: no search or scan goes there.
+        $floor = min($net['splitter_deploy_block'], $net['sponsored_splitter_deploy_block'], $net['recurring_deploy_block'],
+            ...array_column(array_merge($net['retired_splitters'], $net['retired_sponsored_splitters']), 'deploy_block'));
+        $back = min(10000, $latest['n'] - $floor);
+        $recent = $back > 0 ? $this->block($latest['n'] - $back) : $latest;
+        $pace = $recent['ts'] < $latest['ts'] ? ($latest['ts'] - $recent['ts']) / $back : 1.0;
+        $fromBlock = $this->firstBlockAt($fromTs, $latest, $pace, $floor);
+        $toBlock = $this->firstBlockAt($toTs + 1, $latest, $pace, $floor) - 1;
         $entries = [];
         $row = static function (array $l, string $kind, string $payer, string $reference, int $gross, int $fee, int $networkFee, int $netUnits) use ($refs): array {
             return [
@@ -369,9 +376,23 @@ final class Statement
         // larger. Only when the wallet sent anything are the look-back's payments read (they match, they are not rows).
         $sent = $this->getLogs($net['usdc'], [self::TOPICS['transfer'], $walletTopic], $fromBlock, $toBlock);
         if ($sent !== [] && $lookbackDays > 0) {
-            $lookFrom = max(0, $this->blockNear($fromTs - $lookbackDays * 86400, $latest) - 5);
-            if ($lookFrom < $fromBlock) {
-                $settlements($lookFrom, $fromBlock - 1);
+            /* A node that no longer keeps the look-back's oldest blocks shortens it to what it has (its "earliest
+             * available" block; without one, no look-back): a refund of a payment older than that is unmatched -
+             * not a row - instead of failing the statement. */
+            $lookFrom = $this->firstBlockAt($fromTs - $lookbackDays * 86400, $latest, $pace, $floor);
+            $kept = count($entries);
+            while ($lookFrom < $fromBlock) {
+                try {
+                    $settlements($lookFrom, $fromBlock - 1);
+                    break;
+                } catch (\RuntimeException $e) {
+                    if (preg_match(self::PRUNED, $e->getMessage()) !== 1) {
+                        throw $e;
+                    }
+                    $entries = array_slice($entries, 0, $kept);
+                    $earliest = preg_match('/earliest available:? *(\d+)/i', $e->getMessage(), $m) === 1 ? (int) $m[1] : 0;
+                    $lookFrom = $earliest > $lookFrom ? $earliest : $fromBlock;
+                }
             }
         }
         /* Each payment can be refunded up to its gross, once: a transfer matches only a payment with that much
@@ -501,8 +522,8 @@ final class Statement
                 [$a, $b] = $spans[$i];
                 if (!$logs instanceof \RuntimeException) {
                     array_push($out, ...$logs);
-                } elseif ($a === $b) {
-                    throw $logs;
+                } elseif ($a === $b || preg_match(self::PRUNED, $logs->getMessage()) === 1) {
+                    throw $logs; // pruned history: no half of it is served either
                 } else {
                     $mid = intdiv($a + $b, 2);
                     array_push($refused, [$a, $mid], [$mid + 1, $b]);
@@ -524,25 +545,52 @@ final class Statement
     }
 
     /**
-     * The block near $ts: an estimate at Base's 2 s per block, corrected twice. Callers widen and filter by date.
+     * The first block at or after $ts ($latest['n'] + 1 when none), never below $floor. No block time is
+     * assumed (Base Sepolia went from 2 s to 0.2 s a block): an estimate from the chain's own recent pace
+     * ($pace, seconds a block), then galloped and bisected until two neighbouring blocks bracket $ts.
      *
      * @param array{n: int, ts: int} $latest
      */
-    private function blockNear(int $ts, array $latest): int
+    private function firstBlockAt(int $ts, array $latest, float $pace, int $floor): int
     {
-        if ($ts >= $latest['ts']) {
-            return $latest['n'];
+        if ($ts > $latest['ts']) {
+            return $latest['n'] + 1;
         }
-        $n = max(0, $latest['n'] - (int) ceil(($latest['ts'] - $ts) / 2));
-        for ($i = 0; $i < 2; $i++) {
-            $b = $this->block($n);
-            if ($b['ts'] === $ts) {
-                break;
+        $at = fn (int $n): int => $this->block($n)['ts'];
+        $lo = $floor - 1; // invariant: block lo is before $ts (floor - 1: below what may be read), block hi at or after it
+        $hi = $latest['n'];
+        $est = min($latest['n'], max($floor, $latest['n'] - (int) floor(($latest['ts'] - $ts) / $pace)));
+        if ($at($est) >= $ts) {
+            $hi = $est;
+            for ($step = 1; $hi > $floor; $step *= 2) {
+                $n = max($floor, $hi - $step);
+                if ($at($n) < $ts) {
+                    $lo = $n;
+                    break;
+                }
+                $hi = $n;
             }
-            $n = min($latest['n'], max(0, $n + (int) round(($ts - $b['ts']) / 2)));
+        } else {
+            $lo = $est;
+            for ($step = 1; ; $step *= 2) {
+                $n = min($latest['n'], $lo + $step);
+                if ($n === $latest['n'] || $at($n) >= $ts) {
+                    $hi = $n;
+                    break;
+                }
+                $lo = $n;
+            }
+        }
+        while ($hi - $lo > 1) {
+            $mid = intdiv($lo + $hi, 2);
+            if ($at($mid) >= $ts) {
+                $hi = $mid;
+            } else {
+                $lo = $mid;
+            }
         }
 
-        return $n;
+        return $hi;
     }
 
     /**

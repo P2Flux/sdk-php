@@ -107,8 +107,10 @@ $matches = static fn (mixed $want, ?string $got): bool => $want === null
 $seen = [];
 $requests = 0;
 /* limit: the widest eth_getLogs range served (wider is a JSON-RPC error); status(n): the HTTP status of the n-th request. */
-$makeStub = static function (int $limit = 5000, ?callable $status = null) use (&$seen, &$requests, $LOGS, $RECEIPTS, $tsOf, $matches): callable {
-    return static function (string $url, array $batch, int $timeout) use (&$seen, &$requests, $limit, $status, $LOGS, $RECEIPTS, $tsOf, $matches): array {
+/* tsAt: the chain's block times (default 2 s a block); earliest: the first block a pruned node still serves logs for. */
+$makeStub = static function (int $limit = 5000, ?callable $status = null, ?callable $tsAt = null, int $earliest = 0) use (&$seen, &$requests, $LOGS, $RECEIPTS, $tsOf, $matches): callable {
+    $tsOf = $tsAt ?? $tsOf;
+    return static function (string $url, array $batch, int $timeout) use (&$seen, &$requests, $limit, $status, $earliest, $LOGS, $RECEIPTS, $tsOf, $matches): array {
     $code = $status === null ? 200 : $status($requests);
     $requests++;
     if ($code !== 200) {
@@ -125,7 +127,7 @@ $makeStub = static function (int $limit = 5000, ?callable $status = null) use (&
         } elseif ($method === 'eth_getLogs') {
             $f = $params[0];
             [$from, $to] = [hexdec($f['fromBlock']), hexdec($f['toBlock'])];
-            $answer = $to - $from > $limit
+            $answer = $from < $earliest ? ['error' => ['code' => -32000, 'message' => "pruned history unavailable: requested {$from}, earliest available {$earliest}"]] : ($to - $from > $limit
                 ? ['error' => ['code' => -32005, 'message' => "query exceeds max block range {$limit}"]]
                 : ['result' => array_values(array_filter($LOGS, static function (array $l) use ($f, $from, $to, $matches): bool {
                     $n = hexdec($l['blockNumber']);
@@ -135,7 +137,7 @@ $makeStub = static function (int $limit = 5000, ?callable $status = null) use (&
                         }
                     }
                     return strtolower($l['address']) === strtolower($f['address']) && $n >= $from && $n <= $to;
-                }))];
+                }))]);
         } elseif ($method === 'eth_getTransactionReceipt') {
             $answer = ['result' => $RECEIPTS[$params[0]] ?? null];
         }
@@ -328,6 +330,30 @@ try {
     $threw = $e;
 }
 check('always 429: an error after a few backed-off rounds', $threw !== null && str_contains($threw->getMessage(), '429') && $requests <= 5 + 4, "requests: {$requests}"); // 5 block reads, then 1 + 3 retries
+
+// --- dates: no block time assumed; look-back: deploy-block floor, pruned nodes ---------------------
+$fast = static fn (int $n): int => GENESIS + intdiv($n, 5); // 0.2 s a block: five blocks share a second
+foreach (['0.2 s' => $fast, '2 s' => $tsOf] as $pace => $tsAt) {
+    $exact = $run(['from' => $tsAt($B2), 'to' => $tsAt($B3), 'transport' => $makeStub(5000, null, $tsAt)]);
+    $outside = $run(['from' => $tsAt($B2) + 1, 'to' => $tsAt($B3) - 1, 'transport' => $makeStub(5000, null, $tsAt)]);
+    check("at {$pace} a block the window is exactly the first block >= from to the last <= to",
+        array_column($exact, 'tx_hash') === [$hash('2'), $hash('3')] && $outside === [] && $exact[0]['date'] === gmdate('Y-m-d\TH:i:s.000\Z', $tsAt($B2)), json_encode(array_column($exact, 'tx_hash')));
+}
+$floor = min($net['splitter_deploy_block'], $net['sponsored_splitter_deploy_block'], $net['recurring_deploy_block']);
+$seen = [];
+$run($october);
+$lowest = min(array_map(static fn (array $r): int => hexdec($r['params'][0]['fromBlock']), array_filter($seen, static fn (array $r): bool => $r['method'] === 'eth_getLogs')));
+check('the look-back starts no lower than the deploy block', $lowest >= $floor, "{$lowest} < {$floor}");
+$pruned = static function (int $earliest) use ($run, $october, $makeStub): array|string {
+    try {
+        return $run($october + ['transport' => $makeStub(5000, null, null, $earliest)]);
+    } catch (RuntimeException $e) {
+        return $e->getMessage();
+    }
+};
+check('a pruned node shortens the look-back: the refund of an older payment is unmatched, not an error', $pruned(46350000) === [], json_encode($pruned(46350000)));
+check('kept far enough back, the look-back reaches the payment', is_array($pruned(46200000)) && count($pruned(46200000)) === 1);
+check('the window itself beyond what the node keeps is an error, never a short statement', is_string($pruned($B6)) && str_contains($pruned($B6), 'pruned'));
 
 echo $failures === 0 ? "\nstatement OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);
