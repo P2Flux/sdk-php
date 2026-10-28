@@ -47,6 +47,8 @@ $reference = '0x03f0752ac8d6e9e6b5bffa5a84881ce0d69c595da28be9ddd91fca4306478f52
 check('checkMerchantRef: the published vector', P2FluxClient::checkMerchantRef($reference, $salt, 'INV-1042'));
 check('another ref is false', !P2FluxClient::checkMerchantRef($reference, $salt, 'INV-1043'));
 check('another salt is false', !P2FluxClient::checkMerchantRef($reference, '0x' . str_repeat('12', 32), 'INV-1042'));
+check('a merchant_ref with a trailing newline is false (the API never accepts one)', !P2FluxClient::checkMerchantRef(
+    Keccak::hash256('p2flux.merchant_ref.v1' . hex2bin(substr($salt, 2)) . "INV-1042\n"), $salt, "INV-1042\n"));
 check('malformed input is false', !P2FluxClient::checkMerchantRef($reference, '0x11', 'INV-1042') && !P2FluxClient::checkMerchantRef('nope', $salt, 'INV-1042')
     && !P2FluxClient::checkMerchantRef($reference, $salt, 'a@b.com'));
 

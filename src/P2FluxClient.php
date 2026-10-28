@@ -269,7 +269,7 @@ final class P2FluxClient
     public static function checkMerchantRef(string $reference, string $salt, string $merchantRef): bool
     {
         if (preg_match('/^0x[0-9a-fA-F]{64}$/', $reference) !== 1 || preg_match('/^0x[0-9a-fA-F]{64}$/', $salt) !== 1
-            || preg_match('~^[A-Za-z0-9._:/#-]{1,64}$~', $merchantRef) !== 1) {
+            || preg_match('~^[A-Za-z0-9._:/#-]{1,64}$~D', $merchantRef) !== 1) {
             return false;
         }
         if (!class_exists(Keccak::class)) {
@@ -311,7 +311,7 @@ final class P2FluxClient
         if (!is_int($tolerance)) {
             throw new \InvalidArgumentException('tolerance_sec must be a whole number of seconds, 0 or more');
         }
-        if (preg_match('/^\d{1,12}$/', $t) !== 1 || $kid === '' || ($parts['v1'] ?? '') === '') {
+        if (preg_match('/^\d{1,12}$/D', $t) !== 1 || $kid === '' || ($parts['v1'] ?? '') === '') {
             throw $invalid;
         }
         $key = isset($options['keys']) ? ($options['keys'][$kid] ?? null) : $this->signingKey($kid);
