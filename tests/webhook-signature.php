@@ -84,7 +84,7 @@ $client = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport
 $client->verifyWebhook(BODY, HEADER, ['now' => T]);
 $client->verifyWebhook(BODY, HEADER, ['now' => T]);
 check('keys come from capabilities once and are cached', $calls === 1, "calls: {$calls}");
-$bare = new P2FluxClient(['apiUrl' => 'https://api.p2flux.example', 'transport' => static fn (): array => [200, ['chain_id' => 8453]]]);
+$bare = new P2FluxClient(['apiUrl' => 'https://bare.p2flux.example', 'transport' => static fn (): array => [200, ['chain_id' => 8453]]]);
 check('an API without signing keys verifies nothing', thrown(fn () => $bare->verifyWebhook(BODY, HEADER, ['now' => T])) === $invalid);
 
 // handleNotification with the header.
@@ -103,6 +103,16 @@ try {
     $threw = true;
 }
 check('a signature needs the raw body', $threw);
+
+// The key cache is per process (per API URL), not per client: a host that builds a client per request
+// (Blesta, PHP-FPM) does not fetch capabilities for every forged kid.
+$calls = 0;
+for ($i = 0; $i < 20; $i++) {
+    $perRequest = new P2FluxClient(['apiUrl' => 'https://per-request.p2flux.example', 'transport' => $api]);
+    thrown(fn () => $perRequest->verifyWebhook(BODY, "t=" . T . ",kid=forged{$i},v1=AAAA", ['now' => T]));
+}
+check('20 per-request clients, forged kids: one capabilities fetch', $calls === 1, "calls: {$calls}");
+check('and the cached key still verifies on a new client', thrown(fn () => (new P2FluxClient(['apiUrl' => 'https://per-request.p2flux.example', 'transport' => $noApi]))->verifyWebhook(BODY, HEADER, ['now' => T])) === '');
 
 echo $failures === 0 ? "\nwebhook signatures OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);

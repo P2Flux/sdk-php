@@ -158,9 +158,13 @@ final class P2FluxClient
      * vendoring this SDK must be able to ship it without shipping a curl call. */
     private static ?CurlTransport $defaultTransport = null;
 
-    /** @var null|array<string, string> The webhook signing keys from capabilities (kid => base64url). */
-    private ?array $signingKeys = null;
-    private int $signingKeysAt = 0;
+    /**
+     * The webhook signing keys from capabilities, per API URL and per PROCESS (not per client): a host
+     * that builds a client per request (Blesta, PHP-FPM) does not fetch them for every forged kid.
+     *
+     * @var array<string, array{keys: array<string, string>, at: int}>
+     */
+    private static array $signingKeys = [];
 
     /** @var array<string, string> p2flux-merchant-token / p2flux-partner-key, when given. */
     private array $limitHeaders = [];
@@ -288,7 +292,7 @@ final class P2FluxClient
      *
      * @param array{keys?: array<string, string>, tolerance_sec?: int, now?: int} $options
      *        keys: kid => base64url public key; default the API's own, from capabilities(), fetched
-     *        once per client. tolerance_sec defaults to 300; now (unix seconds) is for tests.
+     *        once per process. tolerance_sec defaults to 300; now (unix seconds) is for tests.
      * @return array<string, mixed>
      */
     public function verifyWebhook(string $rawBody, string $header, array $options = []): array
@@ -331,23 +335,27 @@ final class P2FluxClient
     }
 
     /**
-     * A webhook signing key by kid, from capabilities: fetched once, again for a kid not seen yet (a
-     * rotation) - but at most once a minute, so forged kids cannot make every check a fetch.
+     * A webhook signing key by kid, from capabilities: fetched once per process, again for a kid not seen
+     * yet (a rotation) - but at most once a minute, so forged kids cannot make every check a fetch. A
+     * failed refetch keeps the keys already known.
      */
     private function signingKey(string $kid): ?string
     {
-        if ($this->signingKeys === null || (!isset($this->signingKeys[$kid]) && time() - $this->signingKeysAt > 60)) {
+        $cached = self::$signingKeys[$this->apiUrl] ?? null;
+        if ($cached === null || (!isset($cached['keys'][$kid]) && time() - $cached['at'] > 60)) {
+            if ($cached !== null) {
+                self::$signingKeys[$this->apiUrl]['at'] = time(); // a failing refetch is still once a minute
+            }
             $keys = [];
             foreach ($this->capabilities()['webhook_signing_keys'] ?? [] as $k) {
                 if (is_string($k['kid'] ?? null) && is_string($k['public_key'] ?? null)) {
                     $keys[$k['kid']] = $k['public_key'];
                 }
             }
-            $this->signingKeys = $keys;
-            $this->signingKeysAt = time();
+            $cached = self::$signingKeys[$this->apiUrl] = ['keys' => $keys, 'at' => time()];
         }
 
-        return $this->signingKeys[$kid] ?? null;
+        return $cached['keys'][$kid] ?? null;
     }
 
     private static function base64UrlDecode(string $value): ?string
