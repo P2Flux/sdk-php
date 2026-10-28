@@ -81,6 +81,13 @@ $LOGS = [
     $log($net['splitter'], [$T['paid'], $REF3, $topic($WALLET), $topic($net['usdc'])], $data(19800000, 200000), $BS, $hash('9'), 2),
     $transfer($WALLET, $P4, 5000000, $B6, $hash('a')),
     $log($net['splitter'], [$T['paid'], $hash('c'), $topic($WALLET), $topic($net['usdc'])], $data(1, 0), 46000000, $hash('8')),
+    // The refund case: wallet W2 (addr 7), payer P5 (addr 8) pays 10 and 1; W2 sends 10, 10, 10, 1.
+    $log($net['sponsored_splitter'], [$T['sponsored_paid'], $hash('5'), $topic($addr('7')), $topic($addr('8'))], $data(9900000, 100000, 0, 0), 46440100, $hash('c')),
+    $log($net['sponsored_splitter'], [$T['sponsored_paid'], $hash('6'), $topic($addr('7')), $topic($addr('8'))], $data(990000, 10000, 0, 0), 46440200, $hash('d')),
+    $transfer($addr('7'), $addr('8'), 10000000, 46441100, $hash('e')),
+    $transfer($addr('7'), $addr('8'), 10000000, 46441200, $hash('f')),
+    $transfer($addr('7'), $addr('8'), 10000000, 46441300, $hash('0')),
+    $transfer($addr('7'), $addr('8'), 1000000, 46441400, '0x' . str_repeat('ab', 32)),
 ];
 $RECEIPTS = [$hash('9') => ['from' => $P4, 'logs' => [$transfer($P4, $WALLET, 19800000, $BS, $hash('9'), 1)]], $hash('1') => ['from' => $addr('5'), 'logs' => [$transfer($P1, $WALLET, 9900000, $B1, $hash('1'), 1), $transfer($P1, $addr('f'), 100000, $B1, $hash('1'), 2)]]];
 
@@ -154,6 +161,12 @@ check('September payment, October refund: the October statement shows the refund
     ['date' => $iso($B6), 'tx_hash' => $hash('a'), 'kind' => 'refund?', 'payer' => $P4, 'reference' => $REF3, 'merchant_ref' => 'INV-0930', 'gross' => '-5.000000', 'p2flux_fee' => '0.000000', 'network_fee' => '0.000000', 'net' => '-5.000000'],
 ], json_encode($refund));
 check('a 1-day look-back (or none) does not reach a payment ~3.4 days back', $run($october + ['lookback_days' => 1]) === [] && $run($october + ['lookback_days' => 0]) === []);
+$refunds = $run(['wallet' => $addr('7')]);
+check('refunds: P5 pays 10 and 1, the wallet sends 10, 10, 10, 1 - one -10 and one -1, the other 10s are not refunds',
+    array_map(static fn (array $r): array => [$r['kind'], $r['reference'], $r['net']], $refunds) === [
+        ['payment', $hash('5'), '9.900000'], ['payment', $hash('6'), '0.990000'], ['refund?', $hash('5'), '-10.000000'], ['refund?', $hash('6'), '-1.000000'],
+    ], json_encode($refunds));
+check('refunds: CSV byte-identical to the JS SDK', Statement::toCsv($refunds) === file_get_contents(__DIR__ . '/fixtures/statement-refunds.csv'));
 check('a wallet with nothing in the window is an empty list', $run(['wallet' => $addr('c')]) === []);
 foreach (['bad wallet' => ['wallet' => 'nope'], 'from after to' => ['from' => $tsOf($B2), 'to' => $tsOf($B1)], 'unknown network' => ['network' => 'mars'], 'negative lookback_days' => ['lookback_days' => -1]] as $label => $bad) {
     $threw = false;

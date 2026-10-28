@@ -14,8 +14,8 @@ namespace P2Flux;
  * No API call, no key, no dependency: raw JSON-RPC to public endpoints (or your own), so the numbers do
  * not depend on P2Flux being up - or honest. One row per settlement to the wallet (one-time payments
  * through the splitter and the sponsored splitter, subscription charges) and per probable refund: a
- * USDC transfer from the wallet back to a payer, after their payment and no larger than it (`kind`
- * 'refund?' - a transfer cannot say why it was sent). The payment may be up to lookback_days (default
+ * USDC transfer from the wallet back to a payer, after their payment and no larger than what is left
+ * of it (each payment is refunded at most up to its gross) (`kind` 'refund?' - a transfer cannot say why it was sent). The payment may be up to lookback_days (default
  * 90) before `from`: a September payment refunded in October is on the October statement as a refund,
  * without the September payment as a row. Amounts are decimal USDC; a refund is negative. `merchant_ref` is filled from the intents you pass, decoded locally.
  *
@@ -337,21 +337,31 @@ final class Statement
                 $settlements($lookFrom, $fromBlock - 1);
             }
         }
+        /* Each payment can be refunded up to its gross, once: a transfer matches only a payment with that much
+         * left (the one with exactly that much left first, else the most recent with room), and uses it up. */
+        $room = array_column($entries, 'gross');
         $settled = $entries;
+        usort($sent, static fn (array $x, array $y): int => [hexdec($x['blockNumber']), hexdec($x['logIndex'])] <=> [hexdec($y['blockNumber']), hexdec($y['logIndex'])]);
         foreach ($sent as $l) {
             $to = self::addressOf($l['topics'][2]);
             $amount = self::words($l['data'])[0] ?? 0;
             $b = hexdec($l['blockNumber']);
             $index = hexdec($l['logIndex']);
             $original = null;
-            foreach ($settled as $e) {
-                if ($e['row']['payer'] === $to && ($e['block'] < $b || ($e['block'] === $b && $e['index'] < $index)) && $e['gross'] >= $amount
-                    && ($original === null || [$e['block'], $e['index']] > [$original['block'], $original['index']])) {
-                    $original = $e;
+            foreach ($settled as $i => $e) {
+                if ($e['row']['payer'] !== $to || !($e['block'] < $b || ($e['block'] === $b && $e['index'] < $index)) || $room[$i] < $amount) {
+                    continue;
+                }
+                $exact = $room[$i] === $amount;
+                $newer = $original === null || [$e['block'], $e['index']] > [$settled[$original]['block'], $settled[$original]['index']];
+                $wasExact = $original !== null && $room[$original] === $amount;
+                if ($original === null || ($exact && !$wasExact) || ($exact === $wasExact && $newer)) {
+                    $original = $i;
                 }
             }
             if ($original !== null) {
-                $entries[] = $row($l, 'refund?', $to, $original['row']['reference'], -$amount, 0, 0, -$amount);
+                $room[$original] -= $amount;
+                $entries[] = $row($l, 'refund?', $to, $settled[$original]['row']['reference'], -$amount, 0, 0, -$amount);
             }
         }
 
