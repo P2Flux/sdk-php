@@ -310,6 +310,9 @@ final class P2FluxClient
         $t = $parts['t'] ?? '';
         $kid = $parts['kid'] ?? '';
         $invalid = new P2FluxException('WEBHOOK_SIGNATURE_INVALID', 'INVALID_REQUEST');
+        if (!function_exists('sodium_crypto_sign_verify_detached')) {
+            throw new \LogicException('verifyWebhook() needs the PHP sodium extension (ext-sodium)');
+        }
         $tolerance = filter_var($options['tolerance_sec'] ?? 300, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
         if (!is_int($tolerance)) {
             throw new \InvalidArgumentException('tolerance_sec must be a whole number of seconds, 0 or more');

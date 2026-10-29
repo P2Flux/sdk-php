@@ -24,10 +24,10 @@
   },
   "require": {
     "php": ">=8.1",
-    "ext-json": "*",
-    "ext-sodium": "*"
+    "ext-json": "*"
   },
   "suggest": {
+    "ext-sodium": "Only for verifyWebhook() (Ed25519). Bundled with PHP since 7.2; some distributions ship it as a separate package.",
     "ext-curl": "Only for the default transport. A host that passes its own `transport` (WordPress, Guzzle, Symfony HttpClient) never loads it."
   },
   "autoload": {
