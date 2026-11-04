@@ -159,8 +159,9 @@ final class P2FluxClient
     private static ?CurlTransport $defaultTransport = null;
 
     /**
-     * The webhook signing keys from capabilities, per API URL and per PROCESS (not per client): a host
-     * that builds a client per request (Blesta, PHP-FPM) does not fetch them for every forged kid.
+     * The webhook signing keys from capabilities, per API URL and per PROCESS (not per client): a
+     * long-running worker fetches them once. Under PHP-FPM statics reset with every request, so each
+     * verify there costs one capabilities call - pass `keys` to verifyWebhook() to avoid it.
      *
      * @var array<string, array{keys: array<string, string>, at: int}>
      */

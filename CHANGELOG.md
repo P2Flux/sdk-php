@@ -5,9 +5,9 @@
 ### Added
 
 - **Signed webhooks.** `verifyWebhook($rawBody, $header, ['keys' => ..., 'tolerance_sec' => 300])`
-  checks the `p2flux-signature` header (Ed25519 via ext-sodium, now in `require`) and returns the event,
+  checks the `p2flux-signature` header (Ed25519 via ext-sodium, listed in `suggest`; without it verifying throws a `LogicException`) and returns the event,
   or throws `WEBHOOK_SIGNATURE_INVALID` / `WEBHOOK_TOO_OLD`. Keys default to the API's own
-  (`capabilities()['webhook_signing_keys']`), fetched once per client. `handleNotification()` takes an
+  (`capabilities()['webhook_signing_keys']`), cached per PHP process (under PHP-FPM that is per request; pass `keys` to skip the fetch). `handleNotification()` takes an
   optional `signature` (plus `keys` / `tolerance_sec`) and refuses a bad one as `confirmed => false`.
 - **merchant_ref.** Passed through on `createPayment()`, `createPaymentLink()`, `createSubscription()`
   and `charge($ref, $merchantRef)` (`ChargeResult::$merchantRef`); confirmed notifications carry
