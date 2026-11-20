@@ -557,7 +557,12 @@ final class P2FluxClient
      * merchant_ref (an older one refuses the field). Check the commitment with
      * P2FluxClient::checkMerchantRef() (no API call).
      *
-     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
+     * `confirmation` is optional: how long the payment must sit on chain before it counts as paid -
+     * 'standard' (default, about 6 s), 'fast' (under 1 s; a rare network reorg in that second could still
+     * undo it), 'safe' (about 100 s, for high value). Signed into the payment. Needs an API with
+     * confirmation levels (an older one refuses the field).
+     *
+     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string, confirmation?: 'standard'|'fast'|'safe'} $terms
      * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, reference_salt?: string, ...}
      */
     public function createPayment(array $terms): array
@@ -965,7 +970,9 @@ final class P2FluxClient
      * read it) and echoed by paymentLinkStatus() and the link's webhooks. The on-chain reference of a
      * link payment does not commit to it. A self-hosted checkout must be new enough to accept it.
      *
-     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
+     * `confirmation` (optional, once and reusable links only): as for createPayment(); not for subscriptions.
+     *
+     * @param array{kind: string, recipient: string, amount: string, label?: string, expires_at?: int, gas_payment_mode?: string, period?: int, periods?: int, suspend_after_days?: int, notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string, confirmation?: 'standard'|'fast'|'safe'} $terms
      * @return array{link: string, manage: string, kind: string, id: string, recipient: string, amount: string, amount_units: string, created_at: int, expires_at: int, return_url?: string, checkout_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, ...}
      */
     public function createPaymentLink(array $terms): array
