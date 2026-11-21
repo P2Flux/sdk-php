@@ -140,6 +140,37 @@ $event = $p2flux->verifyWebhook($rawBody, $_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? '
 
 A signature proves P2Flux sent it, not that money moved: `handleNotification` still asks the API.
 
+### Subscriptions: learn of the signature on your server
+
+The checkout window tells your page when the buyer has signed - but only when they finish in the window
+your page opened. A buyer who finishes in a phone wallet's browser leaves your page waiting, and without
+the subscription reference you can never charge. So give every setup a webhook:
+
+```php
+$setup = $p2flux->createSubscription([
+    'recipient' => $wallet, 'amount' => '199.00', 'period' => 2592000,
+    'merchant_ref' => $checkoutId,                       // yours, unique per attempt
+    'notify_url' => 'https://shop.example/p2flux/subscription',
+    'return_url' => 'https://shop.example/thanks',       // "Back to shop.example" on a phone
+]);
+// store $setup['salt'] with the checkout; open a NEW setup for every attempt (valid until checkout_valid_until)
+
+// POST /p2flux/subscription
+$raw = file_get_contents('php://input');
+$r = $p2flux->handleSubscriptionCreated($raw, $_SERVER['HTTP_P2FLUX_SIGNATURE'] ?? '', [
+    'salt' => $checkout->salt, 'recipient' => $wallet, 'amount_units' => '199000000', 'period' => 2592000,
+]);
+if ($r['confirmed']) {
+    // once per $r['dedupe_key'] (the subscription id): store $r['subscription'], then charge()
+} elseif (str_starts_with($r['reason'], 'WEBHOOK_')) {
+    http_response_code(400);
+}
+```
+
+`salt` is what makes the event yours: anyone can create a setup naming your wallet, your webhook and
+your order number at a lower price. One subscription per customer and plan is yours to enforce - two
+separate checkouts by the same buyer are two subscriptions, and both can be charged.
+
 Answer 4xx/5xx when the reason starts with `WEBHOOK_` (`WEBHOOK_SIGNATURE_INVALID`, `WEBHOOK_TOO_OLD`),
 never 2xx: the event then stays pending, is sent again and shows in the delivery history. A request
 without the header (an API before the release that signs, 2026-11) passes `signature` null (or leaves it

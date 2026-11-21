@@ -438,8 +438,18 @@ final class P2FluxClient
      * Optional `merchant_ref` (your own number, rules as for createPayment()): carried in the signed
      * setup and echoed by resolveSubscription() and status(). Not part of any on-chain value.
      *
-     * @param array{recipient: string, amount: string, period: int, end?: int, allowance?: string|array{periods: int}, merchant_ref?: string} $terms
-     * @return array{setup_token: string, salt: string, amount: string, merchant_ref?: string, merchant_ref_verified?: bool, ...}
+     * Optional `notify_url` (public https): the moment the buyer signs, P2Flux POSTs a signed
+     * `subscription.created` event there with the subscription reference - from any device. USE IT: the
+     * checkout window's own message reaches your page only when the buyer finishes in the window your page
+     * opened, not in a phone wallet's browser. Answer it with handleSubscriptionCreated(). Refused with 429
+     * when your daily webhook budget is used up. Optional `return_url`: a checkout running alone shows
+     * "Back to <your host>" after signing, with `p2flux_subscription` (the public id) and `p2flux_status`
+     * (authorized | approval_needed | expired); it proves nothing - act on the webhook.
+     * The setup can be signed until `checkout_valid_until` (about 15 minutes): create a new one for every
+     * attempt, never reuse one. Store `salt`: it ties the webhook to THIS setup. Needs an API from 2026-11-21.
+     *
+     * @param array{recipient: string, amount: string, period: int, end?: int, allowance?: string|array{periods: int}, merchant_ref?: string, notify_url?: string, return_url?: string} $terms
+     * @return array{setup_token: string, salt: string, amount: string, expires_at: int, checkout_valid_until?: int, notify_url?: string, return_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, ...}
      */
     public function createSubscription(array $terms): array
     {
@@ -1182,6 +1192,86 @@ final class P2FluxClient
         }
 
         return $no('UNKNOWN_EVENT');
+    }
+
+    /**
+     * Answer a `subscription.created` webhook: the buyer signed the subscription you set up with
+     * createSubscription([... 'notify_url' => ...]). Pass the RAW body, the `p2flux-signature` header and the
+     * `salt` createSubscription() returned for the setup you are waiting on.
+     *
+     * Confirmed means: signed by P2Flux, for exactly that setup (salt), and the API itself reads the same
+     * terms out of the reference. `subscription` is then the reference charge() needs: store it and collect
+     * the first payment, idempotently on `dedupe_key` (the subscription id - the same subscription can be
+     * announced twice, the second time with `allowance_ready` true).
+     * The salt is what makes it yours: anyone can create a setup naming your wallet, your webhook and one of
+     * your order numbers at a lower price, so never act on `merchant_ref` alone.
+     * `allowance_ready` false is not "do not charge": try, and retry later on INSUFFICIENT_ALLOWANCE.
+     *
+     * Not confirmed (`confirmed => false`, with `reason`): answer 2xx and do nothing for NOT_YOUR_SETUP,
+     * TERMS_MISMATCH, UNKNOWN_EVENT and MALFORMED; answer 4xx/5xx for WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TOO_OLD.
+     * Throws P2FluxException when the API cannot be asked right now: answer 5xx, P2Flux sends it again.
+     *
+     * @param array{salt: string, recipient?: string, amount_units?: string, period?: int, keys?: array<string, string>, tolerance_sec?: int} $expect
+     * @return array{confirmed: bool, event_id: string, type: string, reason?: string, dedupe_key?: string, subscription?: string, subscription_id?: string, payer?: string, allowance?: string, allowance_ready?: bool, merchant_ref?: string}
+     */
+    public function handleSubscriptionCreated(string $rawBody, string $signature, array $expect): array
+    {
+        $salt = is_string($expect['salt'] ?? null) ? $expect['salt'] : '';
+        if ($salt === '' || preg_match('/^\d{1,78}$/', $salt) !== 1) {
+            throw new \InvalidArgumentException('handleSubscriptionCreated needs the salt createSubscription() returned');
+        }
+        try {
+            $this->verifyWebhook($rawBody, $signature, array_intersect_key($expect, ['keys' => 1, 'tolerance_sec' => 1, 'now' => 1]));
+        } catch (P2FluxException $e) {
+            if ($e->action !== 'INVALID_REQUEST') {
+                throw $e;
+            }
+
+            return ['confirmed' => false, 'event_id' => '', 'type' => '', 'reason' => $e->status];
+        }
+        $event = json_decode($rawBody, true);
+        $eventId = is_array($event) && is_string($event['id'] ?? null) ? $event['id'] : '';
+        $type = is_array($event) && is_string($event['type'] ?? null) ? $event['type'] : '';
+        $data = is_array($event) && is_array($event['data'] ?? null) ? $event['data'] : [];
+        $no = static fn (string $reason): array => ['confirmed' => false, 'event_id' => $eventId, 'type' => $type, 'reason' => $reason];
+        if ($type !== 'subscription.created') {
+            return $no('UNKNOWN_EVENT');
+        }
+        if (!is_string($data['subscription'] ?? null) || !is_string($data['subscription_id'] ?? null) || !is_string($data['salt'] ?? null)) {
+            return $no('MALFORMED');
+        }
+        // Read locally first: an event for somebody else's setup costs no API call.
+        if (!hash_equals($salt, $data['salt'])) {
+            return $no('NOT_YOUR_SETUP');
+        }
+        // The reference is the API's own token: what IT says the terms are is what a charge will collect.
+        try {
+            $terms = $this->status($data['subscription'])['terms'] ?? null;
+        } catch (P2FluxException $e) {
+            if ($e->action === 'INVALID_REQUEST') {
+                return $no($e->status);
+            }
+            throw $e;
+        }
+        if (!is_array($terms) || !hash_equals($salt, (string) ($terms['salt'] ?? ''))) {
+            return $no('NOT_YOUR_SETUP');
+        }
+        $same = static fn (string $key, mixed $want): bool => $want === null || strtolower((string) ($terms[$key] ?? '')) === strtolower((string) $want);
+        if (!$same('recipient', $expect['recipient'] ?? null) || !$same('amount_units', $expect['amount_units'] ?? null) || !$same('period', $expect['period'] ?? null)) {
+            return $no('TERMS_MISMATCH');
+        }
+
+        return [
+            'confirmed' => true,
+            'event_id' => $eventId,
+            'type' => $type,
+            'dedupe_key' => strtolower($data['subscription_id']),
+            'subscription' => $data['subscription'],
+            'subscription_id' => strtolower($data['subscription_id']),
+            'payer' => strtolower((string) ($data['payer'] ?? '')),
+            'allowance' => is_string($data['allowance'] ?? null) ? $data['allowance'] : 'unconfirmed',
+            'allowance_ready' => ($data['allowance_ready'] ?? false) === true,
+        ] + (is_string($data['merchant_ref'] ?? null) ? ['merchant_ref' => $data['merchant_ref']] : []);
     }
 
     /** "Collect now" for one subscriber of your subscription link. Same answers as charge(); never throws. */

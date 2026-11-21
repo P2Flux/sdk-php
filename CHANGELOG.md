@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.0 - unreleased
+
+### Added
+
+- **`subscription.created` webhook.** `createSubscription()` takes `notify_url` and `return_url` (API from
+  2026-11-21) and returns `checkout_valid_until`; `handleSubscriptionCreated($rawBody, $signature, ['salt' => ...])`
+  answers the event: signature, your setup's salt, and the API's own reading of the reference. Use it: a buyer who
+  signs in a phone wallet's browser is otherwise never reported to your page.
+
 ## 0.15.0 - 2026-11-04
 
 ### Added

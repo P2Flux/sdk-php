@@ -128,5 +128,47 @@ for ($i = 0; $i < 20; $i++) {
 check('20 per-request clients, forged kids: one capabilities fetch', $calls === 1, "calls: {$calls}");
 check('and the cached key still verifies on a new client', thrown(fn () => (new P2FluxClient(['apiUrl' => 'https://per-request.p2flux.example', 'transport' => $noApi]))->verifyWebhook(BODY, HEADER, ['now' => T])) === '');
 
+// --- subscription.created: confirmed only for the setup this shop created (salt) and the API's own terms -------
+$salt = '79088244617109580184559177081431817456';
+$merchant = '0x' . str_repeat('ab', 20);
+$created = static fn (array $over = []): string => json_encode(['id' => '0x' . str_repeat('77', 32), 'type' => 'subscription.created', 'created_at' => T, 'chain_id' => 8453,
+    'data' => $over + ['subscription' => 'p2s2.k1.abc.mac', 'subscription_id' => '0x' . str_repeat('CD', 32), 'salt' => $salt, 'payer' => '0x' . str_repeat('EF', 20),
+        'recipient' => $merchant, 'amount' => '199.000000', 'amount_units' => '199000000', 'period' => 2592000, 'allowance' => 'ready', 'allowance_ready' => true, 'merchant_ref' => 'CHK-1']]);
+$statusCalls = 0;
+$shop = static function (array $terms) use (&$statusCalls): P2FluxClient {
+    return new P2FluxClient(['apiUrl' => 'https://shop.p2flux.example', 'transport' => static function (string $url) use ($terms, &$statusCalls): array {
+        if (str_ends_with($url, '/v1/subscriptions/status')) {
+            $statusCalls++;
+            return [200, ['terms' => $terms]];
+        }
+        return [200, ['chain_id' => 8453, 'webhook_signing_keys' => [['kid' => KID, 'alg' => 'Ed25519', 'public_key' => PUBLIC_KEY]]]];
+    }]);
+};
+$good = ['salt' => $salt, 'recipient' => $merchant, 'amount_units' => '199000000', 'period' => 2592000];
+$expect = ['salt' => $salt, 'recipient' => strtoupper($merchant), 'amount_units' => '199000000', 'period' => 2592000, 'now' => T];
+$body = $created();
+$ok = $shop($good)->handleSubscriptionCreated($body, $signed($body, T), $expect);
+check('subscription.created: confirmed with the reference and the subscription id as dedupe key',
+    $ok['confirmed'] === true && $ok['subscription'] === 'p2s2.k1.abc.mac' && $ok['dedupe_key'] === '0x' . str_repeat('cd', 32) && $ok['allowance_ready'] === true && $ok['merchant_ref'] === 'CHK-1');
+$before = $statusCalls;
+$foreign = $created(['salt' => '123']);
+$no = $shop($good)->handleSubscriptionCreated($foreign, $signed($foreign, T), $expect);
+check('a setup somebody else created (other salt) is not ours - and costs no API call', $no['confirmed'] === false && $no['reason'] === 'NOT_YOUR_SETUP' && $statusCalls === $before);
+$cheap = $shop(['salt' => $salt, 'recipient' => $merchant, 'amount_units' => '1000000', 'period' => 2592000])->handleSubscriptionCreated($body, $signed($body, T), $expect);
+check('the API reading other terms out of the reference (a cheaper plan) is refused', $cheap['confirmed'] === false && $cheap['reason'] === 'TERMS_MISMATCH');
+$lied = $shop(['salt' => '999', 'recipient' => $merchant, 'amount_units' => '199000000', 'period' => 2592000])->handleSubscriptionCreated($body, $signed($body, T), $expect);
+check('a reference that belongs to another setup than the event claims is refused', $lied['confirmed'] === false && $lied['reason'] === 'NOT_YOUR_SETUP');
+$forged = $shop($good)->handleSubscriptionCreated($body, $signed($body . ' ', T), $expect);
+check('a body not signed by P2Flux is refused', $forged['confirmed'] === false && $forged['reason'] === 'WEBHOOK_SIGNATURE_INVALID');
+$other = json_encode(['id' => 'e', 'type' => 'payment.paid', 'data' => []]);
+check('another event type is not answered here', $shop($good)->handleSubscriptionCreated($other, $signed($other, T), $expect)['reason'] === 'UNKNOWN_EVENT');
+$needsSalt = false;
+try {
+    $shop($good)->handleSubscriptionCreated($body, $signed($body, T), ['now' => T]);
+} catch (InvalidArgumentException) {
+    $needsSalt = true;
+}
+check('the salt is required', $needsSalt);
+
 echo $failures === 0 ? "\nwebhook signatures OK\n" : "\n{$failures} failure(s)\n";
 exit($failures === 0 ? 0 : 1);
