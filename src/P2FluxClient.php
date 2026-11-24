@@ -226,6 +226,24 @@ final class P2FluxClient
             . 'Wallet: ' . strtolower($wallet) . "\nAPI: " . self::origin($apiUrl) . "\nChain ID: " . $chainId . "\nIssued at: " . $issuedAt;
     }
 
+    /**
+     * The exact text a receiving wallet signs (personal_sign) for setExchangeSeller(): turns "Pay from an
+     * exchange" on or off. `$action` is 'enable' or 'disable'; `$issuedAt` unix seconds, at most 5 minutes
+     * old and newer than the last one accepted. Same text as sdk-js and core.
+     */
+    public static function exchangeOptInMessage(int $chainId, string $wallet, string $action, int $issuedAt, string $apiUrl): string
+    {
+        if ($action !== 'enable' && $action !== 'disable') {
+            throw new \InvalidArgumentException("action must be 'enable' or 'disable'");
+        }
+        $notice = $action === 'enable'
+            ? 'Buyers may pay this wallet by withdrawing USDC from an exchange. It moves no funds and approves nothing.'
+            : 'Buyers may no longer pay this wallet from an exchange. It moves no funds and approves nothing.';
+
+        return "P2Flux: {$action} exchange payments\n\n{$notice}\n\n"
+            . 'Wallet: ' . strtolower($wallet) . "\nAPI: " . self::origin($apiUrl) . "\nChain ID: " . $chainId . "\nIssued at: " . $issuedAt;
+    }
+
     /** scheme://host[:port] as a browser's URL.origin writes it: lowercase, default port dropped. */
     private static function origin(string $url): string
     {
@@ -588,6 +606,78 @@ final class P2FluxClient
     public function resolvePayment(string $intent): array
     {
         [$httpStatus, $body] = $this->post('/v1/payments/resolve', ['intent' => $intent]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * The buyer chose to pay from an exchange (a payment created with `'exchange' => true`): the exact
+     * amount (price plus unique cents), the seller's address and the window. Asking again returns the
+     * same order.
+     *
+     * @return array{reference: string, status: string, amount?: string, recipient?: string, expires_at?: int, ...}
+     */
+    public function startExchangePayment(string $intent): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/payments/exchange', ['intent' => $intent]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * Where an exchange payment stands, from P2Flux's record (no chain read). The way to confirm an
+     * exchange webhook (`data.exchange` true): fulfil on `paid` or `overpaid` only. There is no single
+     * transaction to pass to verifyPayment().
+     *
+     * @return array{reference: string, status: string, received_units?: string, possible?: list<array<string, mixed>>, ...}
+     */
+    public function exchangePaymentStatus(string $intent): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/payments/exchange/status', ['intent' => $intent]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * Seller only (merchantToken for the receiving wallet, or partnerKey): count a possible payment
+     * (from `payment.possible`), or a late one, for this order. Refused once the order is paid.
+     *
+     * @return array{reference: string, status: string, ...}
+     */
+    public function acceptExchangePayment(string $intent, string $txHash, int $logIndex): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/payments/exchange/accept', ['intent' => $intent, 'tx_hash' => $txHash, 'log_index' => $logIndex]);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * Turn "Pay from an exchange" on or off for a receiving wallet: `signature` of exchangeOptInMessage()
+     * by that wallet with its `issued_at`, or neither when this client carries a merchantToken for it.
+     *
+     * @param array{wallet: string, action: 'enable'|'disable', issued_at?: int, signature?: string} $request
+     * @return array{wallet: string, exchange_enabled: bool}
+     */
+    public function setExchangeSeller(array $request): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/exchange/sellers', $request);
+        $this->throwIfError($httpStatus, $body);
+
+        return $body;
+    }
+
+    /**
+     * Whether "Pay from an exchange" is on for a wallet. Public, no chain read.
+     *
+     * @return array{wallet: string, exchange_enabled: bool}
+     */
+    public function exchangeSellerStatus(string $wallet): array
+    {
+        [$httpStatus, $body] = $this->post('/v1/exchange/sellers/status', ['wallet' => $wallet]);
         $this->throwIfError($httpStatus, $body);
 
         return $body;

@@ -363,6 +363,12 @@ $REQUIRED_OPERATIONS = [
     '/v1/merchant-token',
     // ECB exchange rates for statements.
     '/v1/rates',
+    // Pay from an exchange.
+    '/v1/payments/exchange',
+    '/v1/payments/exchange/status',
+    '/v1/payments/exchange/accept',
+    '/v1/exchange/sellers',
+    '/v1/exchange/sellers/status',
 ];
 
 $stub = new StubTransport(['' => [200, ['status' => 'CHARGED', 'valid' => true, 'found' => true]]]);
@@ -400,6 +406,14 @@ $client->redeliverWebhook(['manage' => 'p2lm1.x'], 'evt_1');
 $client->createMerchantToken(['wallet' => '0x' . str_repeat('33', 20), 'signature' => '0x00', 'issued_at' => 1]);
 $client->rates(['from' => '2026-10-01', 'to' => '2026-10-31']);
 check('rates sends the range', end($stub->calls)['payload'] === ['from' => '2026-10-01', 'to' => '2026-10-31']);
+$client->startExchangePayment('p2f1.x');
+check('startExchangePayment sends the intent', end($stub->calls)['payload'] === ['intent' => 'p2f1.x']);
+$client->exchangePaymentStatus('p2f1.x');
+$client->acceptExchangePayment('p2f1.x', $hash, 3);
+check('acceptExchangePayment sends tx_hash and log_index', end($stub->calls)['payload'] === ['intent' => 'p2f1.x', 'tx_hash' => $hash, 'log_index' => 3]);
+$client->setExchangeSeller(['wallet' => '0x' . str_repeat('33', 20), 'action' => 'enable', 'issued_at' => 1, 'signature' => '0x00']);
+$client->exchangeSellerStatus('0x' . str_repeat('33', 20));
+check('exchangeSellerStatus sends the wallet', end($stub->calls)['payload'] === ['wallet' => '0x' . str_repeat('33', 20)]);
 
 $reached = array_values(array_unique(array_map(
     static fn (array $call): string => parse_url($call['url'], PHP_URL_PATH),
@@ -428,6 +442,13 @@ $client->redeliverWebhook(['manage' => 'p2lm1.x'], 'evt_1');
 check('redeliverWebhook names the event', end($stub->calls)['payload'] === ['manage' => 'p2lm1.x', 'event_id' => 'evt_1'] && str_ends_with(end($stub->calls)['url'], '/v1/webhooks/redeliver'));
 
 // --- higher limits: merchant token and partner key ------------------------------------------
+
+check('exchangeOptInMessage is the exact text the API verifies (same as sdk-js and core)',
+    P2FluxClient::exchangeOptInMessage(84532, '0xAbCdEf0000000000000000000000000000000001', 'enable', 1800000000, 'https://API-test.p2flux.com/v1')
+    === "P2Flux: enable exchange payments\n\nBuyers may pay this wallet by withdrawing USDC from an exchange. It moves no funds and approves nothing.\n\n"
+    . "Wallet: 0xabcdef0000000000000000000000000000000001\nAPI: https://api-test.p2flux.com\nChain ID: 84532\nIssued at: 1800000000");
+check('exchangeOptInMessage disable text', str_starts_with(P2FluxClient::exchangeOptInMessage(8453, '0x01', 'disable', 1, 'https://api.p2flux.com'),
+    "P2Flux: disable exchange payments\n\nBuyers may no longer pay this wallet from an exchange."));
 
 check('merchantTokenMessage is the exact text the API verifies (same as sdk-js and core)',
     P2FluxClient::merchantTokenMessage(8453, '0xAbCdEf0000000000000000000000000000000001', 1800000000, 'https://API.p2flux.com/')

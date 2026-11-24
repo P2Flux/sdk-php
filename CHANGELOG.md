@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Pay from an exchange.** `createPayment` passes `exchange` / `exchange_tolerance_bps` through as before
+  (any field does). New methods `startExchangePayment($intent)`, `exchangePaymentStatus($intent)`,
+  `acceptExchangePayment($intent, $txHash, $logIndex)` (seller: merchant token or partner key),
+  `setExchangeSeller(['wallet', 'action', 'issued_at'?, 'signature'?])`, `exchangeSellerStatus($wallet)` and
+  `P2FluxClient::exchangeOptInMessage($chainId, $wallet, $action, $issuedAt, $apiUrl)`. Confirm an exchange
+  payment with `exchangePaymentStatus`; `handleNotification` still verifies by transaction and does not confirm
+  exchange events yet.
 - **`subscription.created` webhook.** `createSubscription()` takes `notify_url` and `return_url` (API from
   2026-11-21) and returns `checkout_valid_until`; `handleSubscriptionCreated($rawBody, $signature, ['salt' => ...])`
   answers the event: signature, your setup's salt, and the API's own reading of the reference. Use it: a buyer who
