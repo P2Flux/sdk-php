@@ -16,6 +16,13 @@
   answers the event: signature, your setup's salt, and the API's own reading of the reference. Use it: a buyer who
   signs in a phone wallet's browser is otherwise never reported to your page.
 
+- **Contracts v2.** `createPayment()` / `createSubscription()` pass `contract_version` (1|2) through like any
+  field (and `gas_payment_mode` `auto`, v2 only); answers carry `contract_version`, `fees` / `fee_bps` and
+  `pending_change` / `pending_changes`. `resolvePayment($intent, $sponsored = false)` prices the sponsored path of a
+  v2 `auto` payment; `prepareAllowanceRevocation($contractVersion = null)` with 2 removes the RecurringV2
+  allowance. New codes `SETTLED_ELSEWHERE` and `AMOUNT_BELOW_FEES` (both `INVALID_REQUEST`); a `valid => false`
+  verify carries `reason` when the API gives one. Old calls send exactly what they sent before.
+
 ## 0.15.0 - 2026-11-04
 
 ### Added

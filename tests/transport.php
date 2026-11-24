@@ -548,6 +548,41 @@ check('a state change is confirmed without a dedupe key', $u['confirmed'] === tr
 $charged['data']['period_index'] = 'x';
 check('a period that is not a number is MALFORMED', $client->handleNotification($charged, ['link_id' => $link, 'manage' => 'p2lm.x'])['reason'] === 'MALFORMED');
 
+// --- contracts v2: contract_version passes through, new parameters are sent only when given ---
+
+$stub = new StubTransport([
+    '/v1/payments/resolve' => [200, ['contract_version' => 2, 'gas_payment_mode' => 'auto']],
+    '/v1/allowances/revoke/prepare' => [200, ['to' => '0x22', 'data' => '0x', 'contract_version' => 2, 'spender' => '0x' . str_repeat('d', 40)]],
+    '/v1/payments' => [200, ['intent' => 'p2f1.x', 'contract_version' => 2, 'fees' => ['fee_bps' => 100, 'pending_change' => ['fee_bps' => 80, 'effective_at' => 1900000000]]]],
+]);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => $stub]);
+$v2 = $client->createPayment(['recipient' => '0x33', 'amount' => '10.00', 'contract_version' => 2, 'gas_payment_mode' => 'auto']);
+check('v2: contract_version and auto pass through', $stub->calls[0]['payload'] === ['recipient' => '0x33', 'amount' => '10.00', 'contract_version' => 2, 'gas_payment_mode' => 'auto']);
+check('v2: the answer keeps contract_version and fees', $v2['contract_version'] === 2 && $v2['fees']['pending_change']['fee_bps'] === 80);
+$client->resolvePayment('p2f1.x', true);
+check('v2: resolvePayment sends sponsored only when asked', $stub->calls[1]['payload'] === ['intent' => 'p2f1.x', 'sponsored' => true]);
+$client->resolvePayment('p2f1.x');
+check('v2: resolvePayment default unchanged', $stub->calls[2]['payload'] === ['intent' => 'p2f1.x']);
+$revoke = $client->prepareAllowanceRevocation(2);
+check('v2: allowance revoke sends contract_version 2', $stub->calls[3]['payload'] === ['contract_version' => 2] && $revoke['spender'] === '0x' . str_repeat('d', 40));
+$client->prepareAllowanceRevocation();
+check('v2: allowance revoke default sends nothing', $stub->calls[4]['payload'] === []);
+
+foreach (['SETTLED_ELSEWHERE', 'AMOUNT_BELOW_FEES'] as $code) {
+    $client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => new StubTransport(['/v1/payments/resolve' => [409, ['error' => $code]]])]);
+    try {
+        $client->resolvePayment('p2f1.x');
+        check("{$code} throws", false);
+    } catch (P2FluxException $e) {
+        check("{$code} is not retryable", $e->status === $code && $e->action === 'INVALID_REQUEST', $e->action);
+    }
+}
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => new StubTransport(['/v1/charges' => [409, ['error' => 'AMOUNT_BELOW_FEES', 'action' => 'INVALID_REQUEST', 'reason' => 'RAISE_PRICE_OR_RESIGN']]])]);
+$below = $client->charge('p2s2.k1.payload.mac');
+check('AMOUNT_BELOW_FEES on charge is a non-retryable result', $below->status === 'AMOUNT_BELOW_FEES' && !$below->retryable && !$below->ok, $below->status);
+$client = new P2FluxClient(['apiUrl' => 'https://api.example', 'transport' => new StubTransport(['/v1/payments/verify' => [200, ['valid' => false, 'code' => 'INVALID_REFERENCE', 'reason' => 'UNRELATED_SETTLEMENT_SAME_REFERENCE']]])]);
+check('verify keeps the reason', $client->verifyPayment('p2f1.x', '0xabc')['reason'] === 'UNRELATED_SETTLEMENT_SAME_REFERENCE');
+
 /* A host that supplies its own transport must never need curl at all.
  *
  * Not tidiness: WordPress.org rejects a plugin that calls curl directly, and a plugin vendoring

@@ -101,6 +101,12 @@ final class P2FluxClient
         'INVALID_EXTRA_DATA' => 'INVALID_REQUEST',
         // A settled intent cannot settle twice; retrying will not change the answer.
         'PAYMENT_ALREADY_PROCESSED' => 'INVALID_REQUEST',
+        /* Contracts v2: these exact terms were settled through ANOTHER P2Flux contract (v1 or v2). Not
+         * paid: a duplicate or unrelated settlement for the merchant to sort out. */
+        'SETTLED_ELSEWHERE' => 'INVALID_REQUEST',
+        /* RecurringV2: at the current registry rates the amount no longer covers the fees. The
+         * subscription is still valid - raise the price or have the payer sign again. */
+        'AMOUNT_BELOW_FEES' => 'INVALID_REQUEST',
         // The transaction may still be propagating or mining - the same question can answer anew.
         'TRANSACTION_NOT_FOUND' => 'RETRY_LATER',
         /* The customer's contract wallet costs more to validate than the API will spend. Only the
@@ -466,8 +472,13 @@ final class P2FluxClient
      * The setup can be signed until `checkout_valid_until` (about 15 minutes): create a new one for every
      * attempt, never reuse one. Store `salt`: it ties the webhook to THIS setup. Needs an API from 2026-11-21.
      *
-     * @param array{recipient: string, amount: string, period: int, end?: int, allowance?: string|array{periods: int}, merchant_ref?: string, notify_url?: string, return_url?: string} $terms
-     * @return array{setup_token: string, salt: string, amount: string, expires_at: int, checkout_valid_until?: int, notify_url?: string, return_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, ...}
+     * Optional `contract_version` (1|2): 2 uses RecurringV2 (renewal fee from the on-chain fee registry, at
+     * least 1 USDC per period), only where the API has contracts v2 switched on - else INVALID_REQUEST with
+     * `raw['reason']` CONTRACTS_V2_UNAVAILABLE. The answer then carries `contract_version`, `fee_bps` and,
+     * when the registry has a change scheduled, `pending_change` / `pending_changes`. Omit it for v1.
+     *
+     * @param array{recipient: string, amount: string, period: int, end?: int, allowance?: string|array{periods: int}, merchant_ref?: string, notify_url?: string, return_url?: string, contract_version?: 1|2} $terms
+     * @return array{setup_token: string, salt: string, amount: string, expires_at: int, checkout_valid_until?: int, notify_url?: string, return_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, contract_version?: 2, fee_bps?: int, pending_change?: array{fee_bps: int, fixed_network_fee_units: string, partner_rate: bool, effective_at: int}, pending_changes?: list<array{fee_bps: int, fixed_network_fee_units: string, partner_rate: bool, effective_at: int}>, ...}
      */
     public function createSubscription(array $terms): array
     {
@@ -585,8 +596,14 @@ final class P2FluxClient
      * merchant_ref (an older one refuses the field). Check the commitment with
      * P2FluxClient::checkMerchantRef() (no API call).
      *
-     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token', notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
-     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, reference_salt?: string, ...}
+     * `contract_version` is optional (1|2): 2 settles through the v2 contracts, only where the API has them
+     * switched on (else INVALID_REQUEST with `raw['reason']` CONTRACTS_V2_UNAVAILABLE). `gas_payment_mode`
+     * 'auto' (v2 only) lets the buyer pay gas in ETH or, without ETH, in USDC. The answer then carries
+     * `contract_version` and `fees` with the registry's `fee_bps`, `partner_rate` and, when a change is
+     * scheduled, `pending_change` / `pending_changes`. Omit it for v1.
+     *
+     * @param array{recipient: string, amount: string, gas_payment_mode?: 'native'|'payment_token'|'auto', contract_version?: 1|2, notify_url?: string, return_url?: string, private_payment?: 'hinkal', merchant_ref?: string} $terms
+     * @return array{intent: string, reference: string, amount: string, notify_url?: string, return_url?: string, private_payment?: 'hinkal', checkout_url?: string, merchant_ref?: string, merchant_ref_verified?: bool, reference_salt?: string, contract_version?: 2, fees?: array{payment_fee_units: string, fixed_network_fee_units: string, merchant_net_units: string, fee_bps?: int, partner_rate?: bool, pending_change?: array<string, mixed>, pending_changes?: list<array<string, mixed>>}, ...}
      */
     public function createPayment(array $terms): array
     {
@@ -601,11 +618,17 @@ final class P2FluxClient
      * Refuses an expired intent (INTENT_EXPIRED) - expiry stops a payment being STARTED; it never
      * makes an existing settlement unverifiable.
      *
-     * @return array{intent?: string, recipient: string, amount: string, ...}
+     * `$sponsored` (v2 `auto` payments only, buyer without ETH): also price the sponsored payment.
+     *
+     * @return array{intent?: string, recipient: string, amount: string, contract_version?: 2, ...}
      */
-    public function resolvePayment(string $intent): array
+    public function resolvePayment(string $intent, bool $sponsored = false): array
     {
-        [$httpStatus, $body] = $this->post('/v1/payments/resolve', ['intent' => $intent]);
+        $payload = ['intent' => $intent];
+        if ($sponsored) {
+            $payload['sponsored'] = true;
+        }
+        [$httpStatus, $body] = $this->post('/v1/payments/resolve', $payload);
         $this->throwIfError($httpStatus, $body);
 
         return $body;
@@ -774,6 +797,7 @@ final class P2FluxClient
      * @return array{
      *     valid: bool,
      *     code?: string,
+     *     reason?: string,
      *     tx_hash?: string,
      *     block_number?: int,
      *     reference?: string,
@@ -1458,13 +1482,16 @@ final class P2FluxClient
 
     /**
      * Calldata that removes the token allowance entirely - stops every P2Flux subscription paid
-     * in that token from this wallet.
+     * in that token from this wallet. `$contractVersion` 2 removes the allowance given to RecurringV2
+     * instead (v2 subscriptions); the answer then names it as `spender`, with `contract_version`.
      *
+     * @param 1|2|null $contractVersion
      * @return array<string, mixed>
      */
-    public function prepareAllowanceRevocation(): array
+    public function prepareAllowanceRevocation(?int $contractVersion = null): array
     {
-        [$httpStatus, $body] = $this->post('/v1/allowances/revoke/prepare', []);
+        $payload = $contractVersion === null ? [] : ['contract_version' => $contractVersion];
+        [$httpStatus, $body] = $this->post('/v1/allowances/revoke/prepare', $payload);
         $this->throwIfError($httpStatus, $body);
 
         return $body;
