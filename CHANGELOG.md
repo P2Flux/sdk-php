@@ -9,7 +9,7 @@
 
 - **Pay from an exchange.** `createPayment` passes `exchange` / `exchange_tolerance_bps` through as before
   (any field does). New methods `startExchangePayment($intent)`, `exchangePaymentStatus($intent)`,
-  `acceptExchangePayment($intent, $txHash, $logIndex)` (seller: merchant token or partner key),
+  `acceptExchangePayment($intent, $txHash, $logIndex)` (seller only: a merchant token for the receiving wallet; the API refuses partner keys there since 27 Nov 2026),
   `setExchangeSeller(['wallet', 'action', 'issued_at'?, 'signature'?])`, `exchangeSellerStatus($wallet)` and
   `P2FluxClient::exchangeOptInMessage($chainId, $wallet, $action, $issuedAt, $apiUrl)`. Confirm an exchange
   payment with `exchangePaymentStatus`; `handleNotification` still verifies by transaction and does not confirm
