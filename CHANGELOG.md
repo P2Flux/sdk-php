@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.16.0 - unreleased
+## 0.16.0 - 2026-11-27
 
 - PHP 8.5+: no more `curl_close()` deprecation notice (it has done nothing since PHP 8.0 and is skipped there).
 - `confirmation` ('standard' | 'fast' | 'safe') documented on createPayment and createPaymentLink.
