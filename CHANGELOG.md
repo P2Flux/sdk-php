@@ -2,6 +2,9 @@
 
 ## 0.16.0 - unreleased
 
+- PHP 8.5+: no more `curl_close()` deprecation notice (it has done nothing since PHP 8.0 and is skipped there).
+- `confirmation` ('standard' | 'fast' | 'safe') documented on createPayment and createPaymentLink.
+
 ### Added
 
 - **Pay from an exchange.** `createPayment` passes `exchange` / `exchange_tolerance_bps` through as before

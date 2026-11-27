@@ -43,7 +43,10 @@ final class CurlTransport
         $raw = curl_exec($ch);
         $httpStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
-        curl_close($ch);
+        // A no-op since PHP 8.0 and deprecated since 8.5 (its notice would land in the shop's page).
+        if (PHP_VERSION_ID < 80000) {
+            curl_close($ch);
+        }
 
         if ($raw === false || $httpStatus === 0) {
             throw new P2FluxException('NETWORK_ERROR', 'RETRY_LATER', ['detail' => $error]);
